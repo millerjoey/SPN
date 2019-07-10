@@ -10,3 +10,7 @@ function Base.show(io::IO, N::Node)
     end
     println(io, "\tscope = $(scope(N))")
 end
+
+function Base.show(io::IO, SPN::SumProductNetwork)
+    println(io, "SPN")
+end

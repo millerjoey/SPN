@@ -37,6 +37,6 @@ scope(N::Node) = (1:length(N.scope))[N.scope]
 getindex(N::Node, i::Integer) = N.children[i]
 
 # IndexedTables helpers
-#import Base: size
-#Base.size(X::IndexedTable) = length(X), length(colnames(X))
-#Base.size(X::IndexedTable, dim) = size(X)[dim]
+import Base: size
+Base.size(X::IndexedTable) = length(X), length(colnames(X))
+Base.size(X::IndexedTable, dim) = size(X)[dim]

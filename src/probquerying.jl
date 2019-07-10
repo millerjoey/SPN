@@ -3,12 +3,22 @@ export logpdf
 function logpdf(SPN::SumProductNetwork, X::AbstractMatrix)
     lps = Vector{Float64}(undef, size(X, 1))
     for i in 1:size(X, 1)
-        lps[i] = logpdf(SPN, view(X, i, :))
+        lps[i] = logpdf(SPN, convert(Vector{Any}, X[i, :]))
     end
     return(lps)
 end
 
 function logpdf(SPN::SumProductNetwork, x::AbstractVector)
+    for (scope,pool) in SPN.categorical_pool
+        x[scope] isa Missing ? continue : nothing
+        if isa(x[scope], AbstractVector)
+            x[scope] = [pool.invindex[v] for v in x[scope]]
+        elseif isa(x[scope], String)
+            x[scope] = pool.invindex[x[scope]]
+        elseif isa(x[scope], CategoricalString)
+            x[scope] = x[scope].level
+        end
+    end
     logpdf(SPN.root, x)
 end
 
@@ -31,11 +41,13 @@ function logpdf(N::ProductNode, x::AbstractVector)
     return(sum(lp))
 end
 
-logpdf(N::Leaf, x::AbstractVector) = logpdf(N, x[N.scope])
+logpdf(N::Leaf, x::AbstractVector) = _logpdf(N, x[N.scope])
 
-logpdf(N::Leaf, x::Interval{:closed,:closed}) = log(cdf(N.dist, x.right) - cdf(N.dist, x.left-eps(Float64)))
-logpdf(N::Leaf, x::Interval{:open,:open}) = log(cdf(N.dist, x.right-eps(Float64)) - cdf(N.dist, x.left))
-logpdf(N::Leaf, x::Interval{:open,:closed}) = log(cdf(N.dist, x.right) - cdf(N.dist, x.left))
-logpdf(N::Leaf, x::Interval{:closed,:open}) = log(cdf(N.dist, x.right - eps(Float64)) - cdf(N.dist, x.left - eps(Float64)))
-logpdf(N::Leaf, x::Missing) = 0.
-logpdf(N::Leaf, x::Real) = isnan(x) ? 0. : logpdf(N.dist, x)
+_logpdf(N::Leaf, x::Interval{:closed,:closed}) = log(cdf(N.dist, x.right) - cdf(N.dist, x.left-eps(Float64)))
+_logpdf(N::Leaf, x::Interval{:open,:open}) = log(cdf(N.dist, x.right-eps(Float64)) - cdf(N.dist, x.left))
+_logpdf(N::Leaf, x::Interval{:open,:closed}) = log(cdf(N.dist, x.right) - cdf(N.dist, x.left))
+_logpdf(N::Leaf, x::Interval{:closed,:open}) = log(cdf(N.dist, x.right - eps(Float64)) - cdf(N.dist, x.left - eps(Float64)))
+_logpdf(N::Leaf, x::Missing) = 0.
+_logpdf(N::Leaf, x::Real) = logpdf(N.dist, x)
+
+_logpdf(N::Leaf{<:DiscreteNonParametric}, x::AbstractVector) = log(sum(pdf.(N.dist, x)))

@@ -28,8 +28,23 @@ struct Leaf{T<:Distribution} <: Node # How do I want to represent/compile indica
 end
 Leaf(dist::Distribution, scope::Integer) = Leaf(dist, scope, uuid1().value)
 
+# abstract type Leaf <: Node end
+# struct CategoricalLeaf <: Leaf
+#     dist::T
+#     pool::P where P<:CategoricalPool
+#     scope::N where N<:Integer
+#     id::S where S<:Integer
+# end
+#
+# struct ContinuousLeaf{T<:Distribution} <: Leaf
+#     dist::T
+#     scope::N where N<:Integer
+#     id::S where S<:Integer
+# end
+
 struct SumProductNetwork
     root::T where T <:Node
+    categorical_pool::Dict{I,P} where {I<:Integer,P<:CategoricalPool}
 end
 
 # Builds cSPN with IDs. Returns initial parameters θ, contains function to map id -> θ subset.

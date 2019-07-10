@@ -9,6 +9,9 @@ function rand(SPN::SumProductNetwork, n::Integer)
     for i in 1:n
         uncondsamp!(SPN.root, view(samps, i, :))
     end
+    for (scope,pool) in SPN.categorical_pool
+        samps[:, scope] .= [pool.index[s] for s in samps[:, scope]]
+    end
     return samps
 end
 
@@ -34,9 +37,25 @@ rand(SPN::SumProductNetwork, query::AbstractVector, n = 1) = rand(SPN::SumProduc
 # Can optimize for large n; don't need to repeat traversal
 
 function rand(SPN::SumProductNetwork, n::Integer, query::AbstractVector)
+    q_orig = deepcopy(query)
+    for (scope,pool) in SPN.categorical_pool
+        query[scope] isa Missing ? continue : nothing
+        if isa(query[scope], AbstractVector)
+            query[scope] = [pool.invindex[v] for v in query[scope]]
+        elseif isa(query[scope], String)
+            query[scope] = pool.invindex[query[scope]]
+        end
+    end
     query = repeat(permutedims(convert(Vector{Any}, query)), outer = [n,1])
     for i in 1:n
         condsamp!(SPN.root, view(query, i, :))
+    end
+    for scope in keys(SPN.categorical_pool)
+        if !(q_orig[scope] isa Missing)
+            for i in 1:size(query, 1)
+                query[i, scope] = q_orig[scope]
+            end
+        end
     end
     return query
 end
@@ -56,7 +75,7 @@ function condsamp!(node::SumNode, query)
 end
 
 function condsamp!(node::Leaf, query)
-    if ismissing(query[scope(node)]) || isnan(query[scope(node)])
+    if !isa(query[scope(node)],Interval) && ismissing(query[scope(node)])
         query[scope(node)] = rand(node.dist)
     end
 end
