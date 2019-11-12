@@ -37,6 +37,19 @@ scope(N::Node) = (1:length(N.scope))[N.scope]
 getindex(N::Node, i::Integer) = N.children[i]
 
 # IndexedTables helpers
-import Base: size
-Base.size(X::IndexedTable) = length(X), length(colnames(X))
-Base.size(X::IndexedTable, dim) = size(X)[dim]
+
+#Base.size(X::IndexedTable) = length(X), length(colnames(X))
+#Base.size(X::IndexedTable, dim) = size(X)[dim]
+
+
+# TypedTables Helpers
+export dims, choose
+choose(X::Table, nm::Symbol) = getproperty(X, nm)
+choose(X::Table, nms::NTuple{T,Symbol}) where T = Table(NamedTuple{nms}([choose(X,nm) for nm in nms]))
+choose(X::Table, nms::Vector{Symbol}) = choose(X::Table, Tuple(nms))
+choose(X::Table, indices::NTuple{T,Integer}) where T = choose(X, columnnames(X)[collect(indices)])
+choose(X::Table, indices::Vector{<:Integer}) = choose(X, columnnames(X)[indices])
+choose(X::Table, index::Integer) = columns(X)[index]
+
+dims(X::Table) = length(X), length(columnnames(X))
+dims(X::Table, dim) = dims(X)[dim]

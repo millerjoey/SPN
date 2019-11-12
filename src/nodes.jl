@@ -41,11 +41,25 @@ Leaf(dist::Distribution, scope::Integer) = Leaf(dist, scope, uuid1().value)
 #     scope::N where N<:Integer
 #     id::S where S<:Integer
 # end
+export ScopeMap
+struct ScopeMap
+    NT::T where T<:NamedTuple
+end
+ScopeMap(V::Vector) = ScopeMap(NamedTuple{Tuple(Symbol.(V))}(collect(1:length(V))))
+
+import Base.getindex, Base.keys
+Base.keys(ScM::ScopeMap) = keys(ScM.NT)
+Base.getindex(ScM::ScopeMap, i::Integer) = keys(ScM)[i]
+Base.getindex(ScM::ScopeMap, nm::Symbol) = ScM.NT[nm]
+
 
 struct SumProductNetwork
-    root::T where T <:Node
-    categorical_pool::Dict{I,P} where {I<:Integer,P<:CategoricalPool}
+    root::T where T<:Node
+    categorical_pool::Dict{I,P} where {I<:Integer,P}
+    ScM::T2 where T2<:ScopeMap
 end
+
+
 
 # Builds cSPN with IDs. Returns initial parameters θ, contains function to map id -> θ subset.
 function add!(N::SumNode, Child::Node, lw::Number)

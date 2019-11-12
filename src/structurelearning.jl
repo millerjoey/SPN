@@ -10,60 +10,62 @@ export factor_v, learnSPN
 function learnSPN(X, α_init=0.1)
     α = ℵ(α_init, α_init) # ("global" alpha, "local" alpha)
     init = SumNode() # Can always Init with a sum node. Weight = 1 by default so just add below it.
-    SPN = learnSPN!(init, X, collect(1:size(X, 2)), BitVector(fill(true, size(X, 1))), weight = 1, α = α)[1] # Take child as root, ignore init.
-    cat_vars = Dict(i=>col[findfirst(x->!ismissing(x), col)].pool for (i,col) in enumerate(columns(X)) if eltype(col) <: Union{Missing,CategoricalString})
-    SPN = SumProductNetwork(SPN, cat_vars)
+    scopemap = ScopeMap(NamedTuple{columnnames(X)}(1:dims(X, 2)))
+    SPN = learnSPN!(init, X, scopemap, weight = 1, α = α)[1] # Take child as root, ignore init.
+    cat_vars = Dict(i=>col.pool for (i,col) in enumerate(columns(X)) if col isa AbstractCategoricalVector)
+    SPN = SumProductNetwork(SPN, cat_vars, scopemap)
     return SPN
 end
 
 # Change to mutating. Modify calls
-function learnSPN!(Node, X, scope, obs; weight = 1, α = ℵ(0.1, 0.1))
-    if length(scope) == 1 # V is a univariate
-        add_univariate_leaf!(Node, X, weight, scope, obs)
+function learnSPN!(n, X, ScM; weight = 1, α = ℵ(0.1, 0.1))
+    if dims(X, 2) == 1 # V is a univariate
+        add_univariate_leaf!(n, X, ScM, weight)
     else
-        factored_scopes = factor(X[obs], scope, α.temp, kind=:HSIC) # Need to pass entire X and current scope. Also, no need to attempt to factor twice in a row.
-        if length(factored_scopes) ≥ 2 # 1 if data doesn't factor.
-            Child = ProductNode()
-            for scope in factored_scopes
-                learnSPN!(Child, X, scope, obs, weight = 1, α = ℵ(α.init, α.init))
+        V = factor(X, α.temp, kind=:HSIC) # Need to pass entire X and current scope. Also, no need to attempt to factor twice in a row.
+        if length(V) ≥ 2 # 1 if data doesn't factor.
+            child = ProductNode()
+            for Vᵢ in V
+                learnSPN!(child, choose(X, Vᵢ), ScM, weight = 1, α = ℵ(α.init, α.init))
             end
-            Node isa SumNode ? add!(Node, Child, log(weight)) : add!(Node, Child)
+            n isa SumNode ? add!(n, child, log(weight)) : add!(n, child)
         else
-            clustered_obs = cluster(select(X, Tuple(scope)), obs)
-            if length(clustered_obs) ≥ 2 #clustering_works and has enough present obs.
-                Child = SumNode()
-                for ob in clustered_obs
-                    learnSPN!(Child, X, scope, ob, weight = sum(ob)/sum(obs), α = ℵ(α.init, α.init))
+            T = cluster(X)
+            if length(T) ≥ 2 #clustering_works and has enough present obs.
+                child = SumNode()
+                for Tⱼ in T
+                    learnSPN!(child, X[Tⱼ], ScM, weight = sum(Tⱼ)/length(Tⱼ), α = ℵ(α.init, α.init))
                 end
-                Node isa SumNode ? add!(Node, Child, log(weight)) : add!(Node, Child)
+                n isa SumNode ? add!(n, child, log(weight)) : add!(n, child)
             else
-                #Node = add_multivariate_leaf(Node, Class, X, weight, scope)
-                learnSPN!(Node, X, scope, obs, weight = weight, α = ℵ(α.init, α.temp/2)) # Step halfway to zero
+                #n = add_multivariate_leaf(n, Class, X, weight, scope)
+                learnSPN!(n, X, ScM, weight = weight, α = ℵ(α.init, NaN)) # Force factorization
             end
         end
     end
-    return(Node)
+    return(n)
 end
 
 export LearnRSPN
 
-function add_univariate_leaf!(SPN, Data_mat, weight, scope, obs)
-    x = collect(skipmissing(select(Data_mat, scope[1])[obs]))
+function add_univariate_leaf!(SPN, X, ScM, weight)
+    scope = ScM[columnnames(X)[1]]
+    x = choose(X,1)
     D = fit_dist(x)
-    SPN isa SumNode ? add!(SPN, Leaf(D, scope[1]), log(weight)) : add!(SPN, Leaf(D, scope[1])) # Still need to do this.
+    SPN isa SumNode ? add!(SPN, Leaf(D, scope), log(weight)) : add!(SPN, Leaf(D, scope)) # Still need to do this.
     nothing
 end
 
 export add_univariate_leaf!
-
-function fit_dist(x::AbstractVector{<:CategoricalString})
-    D = fit(Categorical, [el.level for el in x])
+export fit_dist
+function fit_dist(x::AbstractCategoricalVector)
+    D = Missing <: eltype(x) ? fit(Categorical, [el.level for el in skipmissing(x)]) : fit(Categorical, [el.level for el in x])
     return D
 end
 
-function fit_dist(x::AbstractVector{<:Real})
-    x̄, σ² = mean(x), var(x)
-    if all(isinteger.(x))
+function fit_dist(x::AbstractVector)
+    if all(isinteger.(skipmissing(x)))
+        x̄, σ² = Missing <: eltype(x) ? (mean(skipmissing(x)), var(skipmissing(x))) : (mean(x), var(x))
         if σ² ≤ x̄ # Let's do Poisson
             D = Poisson(x̄)
         else
@@ -73,31 +75,42 @@ function fit_dist(x::AbstractVector{<:Real})
             D = NegativeBinomial(r,p)
         end
     else # Floats
-        if all(x .≥ 0.)
-            D = fit(Gamma, x)
+        if all(skipmissing(x) .≥ 0.)
+            D = Missing <: eltype(x) ? fit(Gamma, collect(skipmissing(x))) : fit(Gamma, x)
         else
-            D = fit(Normal, x)
+            D = Missing <: eltype(x) ? fit(Normal, collect(skipmissing(x))) : fit(Normal, x)
         end
     end
     return D
 end
 
-function factor(X, scope, α = 0.1; kind = :HSIC, nmax_force_factor = 10) # X is the n x V dataset.
+function factor(X, α = 0.1; kind = :HSIC) # X is the n x V dataset.
     # For HSIC, α is the probability of incorrectly rejecting the Null (that cols are indep) given the Null.
     # So lower corresponds to a higher chance of declaring independent.
-    D = test_similarity(X, scope, α = α, kind = kind) # D, the dependency matrix.
-    # Need to force dependency between same-part features.
-    conns = [scope[con] for con in connected_components(Graph(D))]
-    # This stuff is fallback factorization so we don't recurse forever
-    if (length(conns)==1) && ((size(X, 1) ≤ nmax_force_factor)) # Factored a Part out.
-        push!(conns, [pop!(conns[1])])
+    P = test_similarity(X, kind = kind) # D, the dependency matrix.
+    Dep = similar(P, Float64)
+    Dep[diagind(Dep)] .= 1
+    pvals = sort(P.array[:])
+    if isnan(α) # force factorization
+        while isnan(α)
+            a = pop!(pvals)
+            Dep .= ifelse.(P .< a, 1, 0)
+            conns = connected_components(Graph(Dep))
+            if length(conns) > 1
+                break
+            end
+        end
+    else
+        Dep .= ifelse.(P .< α, 1, 0)
+        conns = connected_components(Graph(Dep))
     end
     return(conns)
 end
 export factor
 
-convert_missing(ar::Matrix{Union{Missing,T}}) where T<:Union{Real,CategoricalString} = convert(Matrix{T}, ar)
-convert_missing(ar::Vector{Union{Missing,T}}) where T<:Union{Real,CategoricalString} = convert(Vector{T}, ar)
+convert_missing(ar::Matrix{Union{Missing,T}}) where {T<:Real} = convert(Matrix{T}, ar)
+convert_missing(ar::Vector{Union{Missing,T}}) where {T<:Real} = convert(Vector{T}, ar)
+convert_missing(ar::AbstractCategoricalVector{Union{Missing,T}}) where {T<:String} = convert(CategoricalVector{T}, ar)
 convert_missing(ar) = ar
 #
 # get_scales(X) = map(col -> sqrt(var(col)), eachcol(X))
@@ -111,14 +124,13 @@ convert_missing(ar) = ar
 
 # scale(X, σs) = reduce(hcat, [X[:, i]/σs[i] for i in 1:size(X, 2)])
 
-function cluster(X, obs, min_obs = 5)
-    df = X[obs]
-    any_nonmiss = mapreduce(x->.!ismissing.(x), (x,y)->x .| y, columns(df))
-    assignments = rcopy(R"cluster::pam(as.matrix(cluster::daisy(x = $(DataFrames.DataFrame(df))))[$any_nonmiss,$any_nonmiss], 2)$clustering")
-    left_instances = BitVector(undef, size(df, 1))
-    left_instances[any_nonmiss] .= (assignments .== 1)
-    left_instances[.!any_nonmiss] .= rand(Bool, sum(.!any_nonmiss))
-    for col in columns(X[obs])
+function cluster(X, min_obs = 5)
+    # Need to skipmissing or find some way to handle missings.
+    U,Δ,_ = pcamix(X)
+    coords = U*Δ
+    assignments = kmeans(coords', 2).assignments
+    left_instances = (assignments .== 1)
+    for col in columns(X)
         nonmissings = .!ismissing.(col)
         n_l = sum(left_instances .& nonmissings)
         n_r = sum(.!left_instances .& nonmissings)
@@ -127,27 +139,19 @@ function cluster(X, obs, min_obs = 5)
             return(())
         end
     end
-    l_obs,r_obs = copy(obs),copy(obs)
-    l_obs[obs] .= left_instances
-    r_obs[obs] .= .!left_instances
-    return(l_obs, r_obs)
+    return(left_instances, .!left_instances)
 end
 
 # function cluster(X, min_obs = 5)
-#     # Clustering will find clusters based on complete caases and assign Ts based on closeness in their non-NaN components.
-#     nonmissing_X = .!ismissing.(X.array)
-#     complete_cases = reduce(&, nonmissing_X, dims = 2)[:]
-#     X_copy = convert_missing(X[complete_cases, :].array)
-#     σs = get_scales(X_copy)
-#     scale!(X_copy, σs)
-#     kfits = kmeans(X_copy', 2) # Hardcode two clusters for now. Can do cross validation for k later.
-#     #if kfits.assignments
-#     # Change assignment map to
-#     c₁, c₂ = kfits.centers[:, 1], kfits.centers[:, 2]
-#     left_instances = [dist_non_missing(v,c₁) < dist_non_missing(v,c₂) ? true : false for v in eachrow(scale(X.array, σs))]
-#     for col in eachcol(nonmissing_X)
-#         n_l = sum(col .& left_instances)
-#         n_r = sum(col) - n_l
+#     any_nonmiss = mapreduce(x->.!ismissing.(x), (x1,x2)->x1 .| x2, columns(X))
+#     assignments = rcopy(R"cluster::pam(as.matrix(cluster::daisy(x = $(DataFrames.DataFrame(X))))[$any_nonmiss,$any_nonmiss], 2)[['clustering']]")
+#     left_instances = BitVector(undef, dims(X, 1))
+#     left_instances[any_nonmiss] .= (assignments .== 1)
+#     left_instances[.!any_nonmiss] .= rand(Bool, sum(.!any_nonmiss))
+#     for col in columns(X)
+#         nonmissings = .!ismissing.(col)
+#         n_l = sum(left_instances .& nonmissings)
+#         n_r = sum(.!left_instances .& nonmissings)
 #         if (n_l < min_obs) || (n_r < min_obs)
 #             # Can add logic to "validify" the clusters by assigning "closest" observations that have the relevant attribuet.
 #             return(())
@@ -158,20 +162,19 @@ end
 
 export cluster,indeptest
 
-function indeptest(X::Vector{<:Number},Y::Vector{<:Number}, α)
-    value, threshold = gammaHSIC(X, Y, α = α, randomSubSet = 1000)
-    return ifelse((value < threshold) | isnan(value) | isnan(threshold), 0, 1)
+function indeptest(X::Vector{<:Number},Y::Vector{<:Number})
+    p = gammaHSIC(X, Y)
+    return ifelse(isnan(p), 1., p)
 end
 
-function indeptest(X::Vector{<:Number},Y::CategoricalArray, α)
+function indeptest(X::Vector{<:Number},Y::CategoricalArray)
     # Just doing a Kruskal Wallis test
     # Need to split X into groups defined by Y and call KruskallWallisTest()
     if length(Y.pool)==1
-        return(0)
+        return(1.)
     else
-        groups = splitby(X, Y)
-        p = pvalue(KruskalWallisTest(groups...))
-        return ifelse(p < α, 1, 0)
+        kwtest = KruskalWallisTest(splitby(X, Y)...)
+        return pvalue(kwtest)
     end
 end
 
@@ -184,50 +187,33 @@ function splitby(X::Vector{<:Number}, F::CategoricalArray)
     return(split_X)
 end
 
-indeptest(X::CategoricalArray,Y::Vector{<:Number}, α) = indeptest(Y,X, α)
+indeptest(X::CategoricalArray,Y::Vector{<:Number}) = indeptest(Y,X)
 
-function indeptest(X::CategoricalArray,Y::CategoricalArray, α)
-    if length(Y.pool)==1 || length(X.pool)==1
-        return(0)
-    else
-        d = counts(X.refs, Y.refs)
-        p = pvalue(PowerDivergenceTest(d, lambda = 1.))
-        return ifelse(p < α, 1, 0)
+function indeptest(X::CategoricalArray,Y::CategoricalArray)
+    d = counts(X.refs, Y.refs)
+    if any(size(d).==1)
+        return(1.)
     end
+    return pvalue(PowerDivergenceTest(d, lambda = 1.))
 end
 
 # Modify to find "approximate independence", otherwise will always reject hypothesis with enough data.
 # Right now, this problem is addressed by limiting # of obs for HSIC. Also speeds up calculation.
-function test_similarity(X, scope = 1:size(X, 2); α = 0.05, kind = :HSIC) # α for test with H_0: independence.
+function test_similarity(X; kind = :HSIC, ntest_samps = 100) # p val for test with H_0: independence.
     @assert kind in [:HSIC] "only supports HSIC right now since that tests H₀: Indep."
-    Dep = NamedArray(Array{Int64,2}(undef,(size(X, 2), size(X, 2))), (collect(colnames(X)), collect(colnames(X)))) # 1 means dependent.
-    Dep[diagind(Dep)] .= 1
-    for colpair in combinations(scope,2)
+    P = NamedArray(Array{Float64,2}(undef,(dims(X, 2), dims(X, 2))), (collect(columnnames(X)), collect(columnnames(X)))) # 1 means dependent.
+    P[diagind(P)] .= 0.
+    for colpair in combinations(columnnames(X), 2)
         i,j = colpair[1],colpair[2]
-        nonmissing_inds = .!ismissing.(select(X, i)) .& .!ismissing.(select(X, j))
+        nonmissing_inds = .!ismissing.(choose(X, i)) .& .!ismissing.(choose(X, j))
         if sum(nonmissing_inds) == 0
-            Dep[i,j] = Dep[j,i] = 0
+            P[i,j] = P[j,i] = 1. # i.e. assume Independent
         else
-            samps = sum(nonmissing_inds) > 1000 ? sample(1:sum(nonmissing_inds), 1000) : 1:sum(nonmissing_inds)
-            Dep[i,j] = Dep[j,i] = indeptest(convert_missing(select(X, i)[nonmissing_inds][samps]), convert_missing(select(X, j)[nonmissing_inds][samps]), α)
-            # elseif kind==:kendall
-            #     r = corkendall(X.array[nonmissing_inds, i], X.array[nonmissing_inds, j])
-            #     n = sum(nonmissing_inds)
-            #     t = r/sqrt(2(2n+5)/(9n*(n-1)))
-            #     t₀ = quantile(TDist(n-2), α/2), quantile(TDist(n-2), 1 - α/2) # Outside this range is H_1: dependent
-            #     Dep[i,j] = Dep[j,i] = ifelse(t₀[1] < t ≤ t₀[2], 0, 1)
-            # elseif kind==:pearson
-            #     r = cor(X.array[nonmissing_inds, i], X.array[nonmissing_inds, j])
-            #     n = sum(nonmissing_inds)
-            #     t = r*sqrt(n-2)/sqrt(1 - r^2)
-            #     t₀ = quantile(Normal(), α/2), quantile(Normal(), 1 - α/2) # Outside this range is H_1: dependent
-            #     Dep[i,j] = Dep[j,i] = ifelse(t₀[1] < t ≤ t₀[2], 0, 1) # Outside this range is H_1: dependent
+            samps = sum(nonmissing_inds) > ntest_samps ? sample(1:sum(nonmissing_inds), ntest_samps) : 1:sum(nonmissing_inds)
+            P[i,j] = P[j,i] = indeptest(convert_missing(choose(X, i)[nonmissing_inds][samps]), convert_missing(choose(X, j)[nonmissing_inds][samps]))
         end
     end
-    return(Dep[scope, scope])
+    return(P)
 end
 
 export get_data_matrix, test_similarity
-
-# Note:
-# I have not implemented a way to allow for attributes to be binary/categorical. Worth doing after refactoring the code

@@ -1,8 +1,8 @@
 module SPN
 
 using HilbertSchmidtIndependenceCriterion,IntervalSets,StaticArrays
-using UUIDs,Distributions,IndexedTables,NamedArrays
-using CategoricalArrays,RCall
+using UUIDs,Distributions,TypedTables,NamedArrays
+using CategoricalArrays,MixedPCA
 
 import DataFrames
 import Base: rand, getindex
