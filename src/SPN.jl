@@ -3,9 +3,10 @@ module SPN
 using HilbertSchmidtIndependenceCriterion,IntervalSets,StaticArrays
 using UUIDs,Distributions,TypedTables,NamedArrays
 using CategoricalArrays,MixedPCA
+using Suppressor
 
 import DataFrames
-import Base: rand, getindex
+import Base: rand, getindex, length
 import StatsBase: counts
 import Distributions: scale, scale!, logpdf
 import HypothesisTests: KruskalWallisTest, pvalue, PowerDivergenceTest
@@ -19,6 +20,7 @@ import Clustering: kmeans,kmedoids
 include("NegativeBinomial.jl")
 include("nodes.jl")
 include("show.jl")
+include("allmissing.jl")
 include("probquerying.jl")
 include("sampling.jl")
 include("structurelearning.jl")

@@ -2,11 +2,13 @@
 # Put on Github
 # Allow to fit kernel densities as leaves. Can use Distributions package.
 # Add way of printing SPN as a mixture model for fun.
+# look into https://arxiv.org/pdf/1908.03250.pdf
 
 using Revise
 # Need to activate SPN
+Pkg.activate(".")
 using SPN
-using IntervalSets, NamedArrays,CategoricalArrays,Distributions
+using IntervalSets, NamedArrays, CategoricalArrays, Distributions
 using BenchmarkTools
 
 n = 1000
@@ -21,11 +23,39 @@ D = Table(D; x₅=x5)
 D = Table(D; x₆=x6)
 
 import Juno: @enter,@run,@profiler
-# still scopeunion problems
-using ProfileView
-@time spn = learnSPN(D, 0.3)
 
-@time S = rand(spn, 10000)
+# Still some issues. Not sure where.
+using Random
+
+spn = learnSPN(D, 0.3)
+
+@btime rand(spn, 100)
+# 705.9 microseconds
+
+@btime rand(spn, 100, [1, missing, missing, missing, "C", missing])
+# 945 microseconds
+
+@btime rand(spn, 100, [missing, missing, missing, missing, missing, missing])
+
+@btime rand(spn, 100, Dict(:x₁=>1, :x₅=>"C"))
+
+@btime rand(spn, 100, Dict(1=>1, 5=>"C"))
+# 879 microseconds
+
+
+@time rand(spn, 1000)
+# 1.047 ms (16642 allocations: 767.83 KiB)
+
+
+@btime rand(spn, 1000, SPN.AllMissing())
+@btime S = rand(spn, 10000)
+@time S1 = rand(spn, 10000,  [missing, 2..4, missing, missing, missing, missing])
+
+@time exp.(logpdf(spn, S1))
+
+@time r = rand(spn, 100)
+@enter logpdf(spn, r)
+
 
 cov(S[:, 1:4]), cor(S[:, 1:4])
 
@@ -39,11 +69,13 @@ cov(D_nonmiss[:, 1:4]),
 cor(D_nonmiss[:, 1:4])
 
 
+logpdf(spn, [missing, missing, missing, -Inf..Inf, missing, ["E", "D"]]) |> exp
+@time logpdf(spn, Dict(:x₁ => -1, :x₅ => ["A", "B", "C"]))
+@time logpdf(spn, [-1, missing, missing, missing, missing, missing])
 
+@time logpdf(spn, [-1, missing, 1..4, 2, missing, "E"]) - logpdf(spn, [-1, missing, missing, missing, missing, missing]) |> exp
 
-logpdf(spn, [-1, missing, missing, 2, missing, missing]) - logpdf(spn, [-1, missing, missing, missing, missing, missing]) |> exp
-
-@time logpdf(spn, [missing, missing, missing, missing, missing,missing]) |> exp
+@btime logpdf(spn, [1..20, missing, missing, missing, missing, missing]) |> exp
 
 
 
@@ -74,3 +106,13 @@ satact = Table(satact)
 # TODO
 Make package implementing MFA, use instead of calling R.
 Test so it achieves the same results.
+
+
+
+
+###
+center_scale(x) = (x .- mean(x))/sqrt(var(x, corrected = false))
+x = Table(x1 = randn(100), x2 = randn(100), x3 = randn(100))
+x = Table(map(center_scale, columns(x)))
+using MixedPCA
+U, Δ, Vt = pcamix(x)

@@ -1,5 +1,6 @@
 export logpdf
 
+# Make logpdf only work on matrices? Will it be faster?
 function logpdf(SPN::SumProductNetwork, X::AbstractMatrix)
     lps = Vector{Float64}(undef, size(X, 1))
     for i in 1:size(X, 1)
@@ -8,15 +9,18 @@ function logpdf(SPN::SumProductNetwork, X::AbstractMatrix)
     return(lps)
 end
 
+"""
+Needs query as dict with columnnames as symbols or
+"""
+logpdf(SPN::SumProductNetwork, query::AbstractDict) = logpdf(SPN, queryfromdict(SPN, query))
+
 function logpdf(SPN::SumProductNetwork, x::AbstractVector)
     for (scope,pool) in SPN.categorical_pool
         x[scope] isa Missing ? continue : nothing
         if isa(x[scope], AbstractVector)
             x[scope] = [pool.invindex[v] for v in x[scope]]
-        elseif isa(x[scope], String)
+        else
             x[scope] = pool.invindex[x[scope]]
-        elseif isa(x[scope], CategoricalString)
-            x[scope] = x[scope].level
         end
     end
     logpdf(SPN.root, x)

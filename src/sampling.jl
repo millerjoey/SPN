@@ -1,81 +1,54 @@
 export rand
 
 ##### Unconditional Sampling #####
-rand(SPN::SumProductNetwork) = rand(SPN::SumProductNetwork, 1)
-# Can probably optimize for large n; don't need to repeat traversal
-
-function rand(SPN::SumProductNetwork, n::Integer)
-    samps = Matrix(undef, n, length(SPN.root.scope))
-    for i in 1:n
-        uncondsamp!(SPN.root, view(samps, i, :))
-    end
-    for (scope,pool) in SPN.categorical_pool
-        samps[:, scope] .= [pool.index[s] for s in samps[:, scope]]
-    end
-    return samps
-end
-
-function uncondsamp!(node::ProductNode, samp)
-    for c in children(node)
-        uncondsamp!(c, samp)
-    end
-end
-
-function uncondsamp!(node::SumNode, samp)
-    w = weights(node)
-    z = rand(Categorical(w / sum(w)))
-    uncondsamp!(node[z], samp)
-end
-
-function uncondsamp!(node::Leaf, samp)
-    samp[scope(node)] = rand(node.dist)
-end
+rand(SPN::SumProductNetwork, n::Integer = 1) = rand(SPN, n, AllMissing())
 
 #### Conditional Sampling #####
 
 rand(SPN::SumProductNetwork, query::AbstractVector, n = 1) = rand(SPN::SumProductNetwork, n, query::AbstractVector)
-# Can optimize for large n; don't need to repeat traversal
 
-function rand(SPN::SumProductNetwork, n::Integer, query::AbstractVector)
-    q_orig = deepcopy(query)
+# Allow query to be a dictionary. Dict("x1"=>5, "x2"=>1..2, "x5"=>"C") and assume the rest missing.
+rand(SPN::SumProductNetwork, n::Integer, query::Dict) = rand(SPN, n, queryfromdict(SPN, query))
+
+function rand(SPN::SumProductNetwork, n::Integer, query)
+    # force query to contain static arrays maybe?
     for (scope,pool) in SPN.categorical_pool
-        query[scope] isa Missing ? continue : nothing
-        if isa(query[scope], AbstractVector)
-            query[scope] = [pool.invindex[v] for v in query[scope]]
-        elseif isa(query[scope], String)
-            query[scope] = pool.invindex[query[scope]]
-        end
-    end
-    query = repeat(permutedims(convert(Vector{Any}, query)), outer = [n,1])
-    for i in 1:n
-        condsamp!(SPN.root, view(query, i, :))
-    end
-    for scope in keys(SPN.categorical_pool)
-        if !(q_orig[scope] isa Missing)
-            for i in 1:size(query, 1)
-                query[i, scope] = q_orig[scope]
+        if !ismissing(query[scope])
+            eltype(query) !== Any && (query = convert(Vector{Any}, query))
+            if isa(query[scope], AbstractVector)
+                query[scope] = [pool.invindex[v] for v in query[scope]]
+            elseif isa(query[scope], String)
+                query[scope] = pool.invindex[query[scope]]
             end
         end
     end
-    return query
+    samps = Dict(i=>(ismissing(query[i]) ? convert(Vector{Union{T,Missing}}, fill(missing, n)) : fill(query[i], n)) for (i,T) in zip(1:length(SPN.ScM), SPN.ScM.Types))
+    condsamp!(samps, SPN.root, 1:n, query)
+    for (scope,pool) in SPN.categorical_pool
+        samps[scope] = [pool.index[s] for s in samps[scope]]
+    end
+    return reduce(hcat, [samps[k] for k in 1:length(samps)])
 end
 
-function condsamp!(node::ProductNode, query)
+# Precompute which inds are missing in query so I can skip some steps and not always traverse.
+function condsamp!(samps, node::ProductNode, inds, query)
     for c in children(node)
-        condsamp!(c, query)
+        condsamp!(samps, c, inds, query)
     end
 end
 
-function condsamp!(node::SumNode, query)
+function condsamp!(samps, node::SumNode, inds, query)
     pdfs = exp.([logpdf(c,query) for c in children(node)])
     w = pdfs .* weights(node)
-    z = rand(Categorical(w / sum(w))) # Normalisation due to precision errors.
+    z = rand(Categorical(w / sum(w)), length(inds)) # Normalisation due to precision errors.
     # Generate observation by drawing from a child.
-    condsamp!(node[z], query)
+    for i in unique(z)
+        condsamp!(samps, node[i], inds[i .== z], query)
+    end
 end
 
-function condsamp!(node::Leaf, query)
-    if !isa(query[scope(node)],Interval) && ismissing(query[scope(node)])
-        query[scope(node)] = rand(node.dist)
+function condsamp!(samps, node::Leaf, inds, query)
+    if ismissing(query[scope(node)])
+        samps[scope(node)][inds] .= rand(node.dist, length(inds))
     end
 end

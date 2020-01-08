@@ -10,9 +10,9 @@ export factor_v, learnSPN
 function learnSPN(X, α_init=0.1)
     α = ℵ(α_init, α_init) # ("global" alpha, "local" alpha)
     init = SumNode() # Can always Init with a sum node. Weight = 1 by default so just add below it.
-    scopemap = ScopeMap(NamedTuple{columnnames(X)}(1:dims(X, 2)))
+    scopemap = ScopeMap(columnnames(X), nonmissingtype.(eltype.(values(columns(X)))))
     SPN = learnSPN!(init, X, scopemap, weight = 1, α = α)[1] # Take child as root, ignore init.
-    cat_vars = Dict(i=>col.pool for (i,col) in enumerate(columns(X)) if col isa AbstractCategoricalVector)
+    cat_vars = Dict{Int64,Any}(i=>col.pool for (i,col) in enumerate(columns(X)) if col isa AbstractCategoricalVector)
     SPN = SumProductNetwork(SPN, cat_vars, scopemap)
     return SPN
 end
@@ -26,7 +26,7 @@ function learnSPN!(n, X, ScM; weight = 1, α = ℵ(0.1, 0.1))
         if length(V) ≥ 2 # 1 if data doesn't factor.
             child = ProductNode()
             for Vᵢ in V
-                learnSPN!(child, choose(X, Vᵢ), ScM, weight = 1, α = ℵ(α.init, α.init))
+                learnSPN!(child, select(X, Vᵢ), ScM, weight = 1, α = ℵ(α.init, α.init))
             end
             n isa SumNode ? add!(n, child, log(weight)) : add!(n, child)
         else
@@ -50,7 +50,7 @@ export LearnRSPN
 
 function add_univariate_leaf!(SPN, X, ScM, weight)
     scope = ScM[columnnames(X)[1]]
-    x = choose(X,1)
+    x = select(X,1)
     D = fit_dist(x)
     SPN isa SumNode ? add!(SPN, Leaf(D, scope), log(weight)) : add!(SPN, Leaf(D, scope)) # Still need to do this.
     nothing
@@ -75,7 +75,7 @@ function fit_dist(x::AbstractVector)
             D = NegativeBinomial(r,p)
         end
     else # Floats
-        if all(skipmissing(x) .≥ 0.)
+        if all(skipmissing(x) .> 0.)
             D = Missing <: eltype(x) ? fit(Gamma, collect(skipmissing(x))) : fit(Gamma, x)
         else
             D = Missing <: eltype(x) ? fit(Normal, collect(skipmissing(x))) : fit(Normal, x)
@@ -112,22 +112,37 @@ convert_missing(ar::Matrix{Union{Missing,T}}) where {T<:Real} = convert(Matrix{T
 convert_missing(ar::Vector{Union{Missing,T}}) where {T<:Real} = convert(Vector{T}, ar)
 convert_missing(ar::AbstractCategoricalVector{Union{Missing,T}}) where {T<:String} = convert(CategoricalVector{T}, ar)
 convert_missing(ar) = ar
-#
-# get_scales(X) = map(col -> sqrt(var(col)), eachcol(X))
-#
-# import Distributions: scale,scale!
-# function scale!(X, σs)
-#     for i in 1:size(X, 2)
-#         X[:, i] .= X[:, i]./σs[i]
-#     end
-# end
 
-# scale(X, σs) = reduce(hcat, [X[:, i]/σs[i] for i in 1:size(X, 2)])
+# Finish this....
+function replace_missings(D::Table)
+    dat = []
+    for (nm,col) in zip(columnnames(D), columns(D))
+        if Missing <: eltype(col)
+            if nonmissingtype(eltype(col)) <: Number
+                col = col .- mean(skipmissing(col))
+                col[ismissing.(col)] .= 0
+                col = convert(Vector{nonmissingtype(eltype(col))}, col)
+            elseif nonmissingtype(eltype(col)) <: CategoricalString
+                "?" in levels(col) ? error("Attempting to recode categorical missing to value: \"?\"") : nothing
+                col = recode(col, missing=>"?")
+            else
+                error("Features must have Number or CategoricalString eltypes (Missings allowed).")
+            end
+            push!(dat, col)
+        end
+    end
+    return Table(NamedTuple{columnnames(D)}(dat))
+end
 
 function cluster(X, min_obs = 5)
     # Need to skipmissing or find some way to handle missings.
-    U,Δ,_ = pcamix(X)
+    # Instead, just replace missing with the column mean and cast it as another level for the categoricals.
+    D = replace_missings(X)
+    U,Δ,_ = pcamix(D)
     coords = U*Δ
+    if size(coords, 2) < 1 || size(coords, 1) < 3 # Categorical, all same level, or n <= k
+        return (())
+    end
     assignments = kmeans(coords', 2).assignments
     left_instances = (assignments .== 1)
     for col in columns(X)
@@ -136,7 +151,7 @@ function cluster(X, min_obs = 5)
         n_r = sum(.!left_instances .& nonmissings)
         if (n_l < min_obs) || (n_r < min_obs)
             # Can add logic to "validify" the clusters by assigning "closest" observations that have the relevant attribuet.
-            return(())
+            return (())
         end
     end
     return(left_instances, .!left_instances)
@@ -173,7 +188,9 @@ function indeptest(X::Vector{<:Number},Y::CategoricalArray)
     if length(Y.pool)==1
         return(1.)
     else
-        kwtest = KruskalWallisTest(splitby(X, Y)...)
+        kwtest = @suppress begin
+            KruskalWallisTest(splitby(X, Y)...)
+        end
         return pvalue(kwtest)
     end
 end
@@ -205,12 +222,12 @@ function test_similarity(X; kind = :HSIC, ntest_samps = 100) # p val for test wi
     P[diagind(P)] .= 0.
     for colpair in combinations(columnnames(X), 2)
         i,j = colpair[1],colpair[2]
-        nonmissing_inds = .!ismissing.(choose(X, i)) .& .!ismissing.(choose(X, j))
+        nonmissing_inds = .!ismissing.(select(X, i)) .& .!ismissing.(select(X, j))
         if sum(nonmissing_inds) == 0
             P[i,j] = P[j,i] = 1. # i.e. assume Independent
         else
             samps = sum(nonmissing_inds) > ntest_samps ? sample(1:sum(nonmissing_inds), ntest_samps) : 1:sum(nonmissing_inds)
-            P[i,j] = P[j,i] = indeptest(convert_missing(choose(X, i)[nonmissing_inds][samps]), convert_missing(choose(X, j)[nonmissing_inds][samps]))
+            P[i,j] = P[j,i] = indeptest(convert_missing(select(X, i)[nonmissing_inds][samps]), convert_missing(select(X, j)[nonmissing_inds][samps]))
         end
     end
     return(P)

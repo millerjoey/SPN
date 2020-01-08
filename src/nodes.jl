@@ -28,35 +28,28 @@ struct Leaf{T<:Distribution} <: Node # How do I want to represent/compile indica
 end
 Leaf(dist::Distribution, scope::Integer) = Leaf(dist, scope, uuid1().value)
 
-# abstract type Leaf <: Node end
-# struct CategoricalLeaf <: Leaf
-#     dist::T
-#     pool::P where P<:CategoricalPool
-#     scope::N where N<:Integer
-#     id::S where S<:Integer
-# end
-#
-# struct ContinuousLeaf{T<:Distribution} <: Leaf
-#     dist::T
-#     scope::N where N<:Integer
-#     id::S where S<:Integer
-# end
+import Base: getindex, keys, length
+
 export ScopeMap
 struct ScopeMap
     NT::T where T<:NamedTuple
+    Types::T where T<:NamedTuple
 end
-ScopeMap(V::Vector) = ScopeMap(NamedTuple{Tuple(Symbol.(V))}(collect(1:length(V))))
+function ScopeMap(nms::Tuple, types::Tuple)
+    types = ifelse.((<:).(types, AbstractString), UInt32, types) # Categoricals repr as uints
+    return ScopeMap(NamedTuple{nms}(collect(1:length(nms))), NamedTuple{Tuple(nms)}(types))
+end
 
-import Base.getindex, Base.keys
 Base.keys(ScM::ScopeMap) = keys(ScM.NT)
 Base.getindex(ScM::ScopeMap, i::Integer) = keys(ScM)[i]
 Base.getindex(ScM::ScopeMap, nm::Symbol) = ScM.NT[nm]
+Base.length(ScM::ScopeMap) = length(ScM.NT)
 
 
 struct SumProductNetwork
     root::T where T<:Node
     categorical_pool::Dict{I,P} where {I<:Integer,P}
-    ScM::T2 where T2<:ScopeMap
+    ScM::ScopeMap
 end
 
 
