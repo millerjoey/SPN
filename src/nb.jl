@@ -2,9 +2,9 @@ export NB,rand,params,logbinom,logpdf
 # Negative Binomial Functions AD-compatible
 
 # Need a new Negative Binomial so I can subtype logpdf so it can be differentiated.
-struct NB <: DiscreteUnivariateDistribution
-    r::T where T<:Real
-    p::T where T<:Real
+struct NB{T<:Real} <: DiscreteUnivariateDistribution
+    r::T
+    p::T
 end
 
 # Need a pdf of Negative Binomial and to implement logpdf for it.

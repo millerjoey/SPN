@@ -32,7 +32,7 @@ import Base: getindex, keys, length
 
 export ScopeMap
 struct ScopeMap
-    NT::T where T<:NamedTuple
+    FeatureMap::T where T<:NamedTuple
     Types::T where T<:NamedTuple
 end
 function ScopeMap(nms::Tuple, types::Tuple)
@@ -40,10 +40,10 @@ function ScopeMap(nms::Tuple, types::Tuple)
     return ScopeMap(NamedTuple{nms}(collect(1:length(nms))), NamedTuple{Tuple(nms)}(types))
 end
 
-Base.keys(ScM::ScopeMap) = keys(ScM.NT)
+Base.keys(ScM::ScopeMap) = keys(ScM.FeatureMap)
 Base.getindex(ScM::ScopeMap, i::Integer) = keys(ScM)[i]
-Base.getindex(ScM::ScopeMap, nm::Symbol) = ScM.NT[nm]
-Base.length(ScM::ScopeMap) = length(ScM.NT)
+Base.getindex(ScM::ScopeMap, nm::Symbol) = ScM.FeatureMap[nm]
+Base.length(ScM::ScopeMap) = length(ScM.FeatureMap)
 
 
 struct SumProductNetwork
@@ -52,9 +52,6 @@ struct SumProductNetwork
     ScM::ScopeMap
 end
 
-
-
-# Builds cSPN with IDs. Returns initial parameters θ, contains function to map id -> θ subset.
 function add!(N::SumNode, Child::Node, lw::Number)
     push!(N.children, Child)
     push!(N.logweights, lw)
@@ -66,24 +63,6 @@ function add!(N::ProductNode, Child::Node)
     push!(N.children, Child)
     scopeunion!(N.scope, Child.scope)
     return N
-end
-
-# Non-mutating (recompile) update to cSPN with parameters θ
-function replace(SPN::SumProductNetwork, θ)
-    parmap = SPN.parmap
-    root = replace(SPN.root, θ, SPN.parmap)
-    return CompiledSPN(root, parmap)
-end
-
-function replace(N::SumNode, θ, parmap)
-    children = Tuple(replace(c, θ, parmap) for c in N.children)
-    ϕ = θ[parmap[N.id]]
-    return SumNode(ϕ/sum(ϕ), children, N.scope, N.id)
-end
-
-function replace(N::ProductNode, θ, parmap)
-    children = Tuple(replace(c, θ, parmap) for c in N.children)
-    return ProductNode(children, N.scope, N.id)
 end
 
 function replace(N::Leaf, θ, parmap)

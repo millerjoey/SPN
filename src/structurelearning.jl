@@ -22,7 +22,7 @@ function learnSPN!(n, X, ScM; weight = 1, α = ℵ(0.1, 0.1))
     if dims(X, 2) == 1 # V is a univariate
         add_univariate_leaf!(n, X, ScM, weight)
     else
-        V = factor(X, α.temp, kind=:HSIC) # Need to pass entire X and current scope. Also, no need to attempt to factor twice in a row.
+        V = factor(X, α.temp) # Need to pass entire X and current scope. Also, no need to attempt to factor twice in a row.
         if length(V) ≥ 2 # 1 if data doesn't factor.
             child = ProductNode()
             for Vᵢ in V
@@ -72,7 +72,7 @@ function fit_dist(x::AbstractVector)
             p = x̄/σ²
             r = x̄^2/(σ²-x̄)
         #D = MixtureModel([C₁, NegativeBinomial(r,p)], [p₀, 1-p₀]) # Mixture, even though support
-            D = NegativeBinomial(r,p)
+            D = NB(r,p)
         end
     else # Floats
         if all(skipmissing(x) .> 0.)
@@ -84,10 +84,10 @@ function fit_dist(x::AbstractVector)
     return D
 end
 
-function factor(X, α = 0.1; kind = :HSIC) # X is the n x V dataset.
+function factor(X, α = 0.1) # X is the n x V dataset.
     # For HSIC, α is the probability of incorrectly rejecting the Null (that cols are indep) given the Null.
     # So lower corresponds to a higher chance of declaring independent.
-    P = test_similarity(X, kind = kind) # D, the dependency matrix.
+    P = test_similarity(X) # D, the dependency matrix.
     Dep = similar(P, Float64)
     Dep[diagind(Dep)] .= 1
     pvals = sort(P.array[:])
@@ -128,8 +128,8 @@ function replace_missings(D::Table)
             else
                 error("Features must have Number or CategoricalString eltypes (Missings allowed).")
             end
-            push!(dat, col)
         end
+        push!(dat, col)
     end
     return Table(NamedTuple{columnnames(D)}(dat))
 end
@@ -157,24 +157,6 @@ function cluster(X, min_obs = 5)
     return(left_instances, .!left_instances)
 end
 
-# function cluster(X, min_obs = 5)
-#     any_nonmiss = mapreduce(x->.!ismissing.(x), (x1,x2)->x1 .| x2, columns(X))
-#     assignments = rcopy(R"cluster::pam(as.matrix(cluster::daisy(x = $(DataFrames.DataFrame(X))))[$any_nonmiss,$any_nonmiss], 2)[['clustering']]")
-#     left_instances = BitVector(undef, dims(X, 1))
-#     left_instances[any_nonmiss] .= (assignments .== 1)
-#     left_instances[.!any_nonmiss] .= rand(Bool, sum(.!any_nonmiss))
-#     for col in columns(X)
-#         nonmissings = .!ismissing.(col)
-#         n_l = sum(left_instances .& nonmissings)
-#         n_r = sum(.!left_instances .& nonmissings)
-#         if (n_l < min_obs) || (n_r < min_obs)
-#             # Can add logic to "validify" the clusters by assigning "closest" observations that have the relevant attribuet.
-#             return(())
-#         end
-#     end
-#     return(left_instances, .!left_instances)
-# end
-
 export cluster,indeptest
 
 function indeptest(X::Vector{<:Number},Y::Vector{<:Number})
@@ -191,7 +173,8 @@ function indeptest(X::Vector{<:Number},Y::CategoricalArray)
         kwtest = @suppress begin
             KruskalWallisTest(splitby(X, Y)...)
         end
-        return pvalue(kwtest)
+        p = pvalue(kwtest)
+        return ifelse(isnan(p), 1., p)
     end
 end
 
@@ -215,9 +198,8 @@ function indeptest(X::CategoricalArray,Y::CategoricalArray)
 end
 
 # Modify to find "approximate independence", otherwise will always reject hypothesis with enough data.
-# Right now, this problem is addressed by limiting # of obs for HSIC. Also speeds up calculation.
-function test_similarity(X; kind = :HSIC, ntest_samps = 100) # p val for test with H_0: independence.
-    @assert kind in [:HSIC] "only supports HSIC right now since that tests H₀: Indep."
+# Right now, this problem is addressed by limiting # of obs for indep tests.
+function test_similarity(X; ntest_samps = 100) # p val for test with H_0: independence.
     P = NamedArray(Array{Float64,2}(undef,(dims(X, 2), dims(X, 2))), (collect(columnnames(X)), collect(columnnames(X)))) # 1 means dependent.
     P[diagind(P)] .= 0.
     for colpair in combinations(columnnames(X), 2)

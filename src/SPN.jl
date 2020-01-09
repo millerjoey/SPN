@@ -17,7 +17,7 @@ import Statistics: cor
 import LinearAlgebra: diagind
 import Combinatorics: permutations, combinations
 import Clustering: kmeans,kmedoids
-include("NegativeBinomial.jl")
+include("nb.jl")
 include("nodes.jl")
 include("show.jl")
 include("allmissing.jl")

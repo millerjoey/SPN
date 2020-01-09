@@ -3,15 +3,14 @@
 # Allow to fit kernel densities as leaves. Can use Distributions package.
 # Add way of printing SPN as a mixture model for fun.
 # look into https://arxiv.org/pdf/1908.03250.pdf
-
-using Revise
 # Need to activate SPN
 Pkg.activate(".")
+using Revise
 using SPN
 using IntervalSets, NamedArrays, CategoricalArrays, Distributions
 using BenchmarkTools
 
-n = 1000
+n = 110
 X = [ifelse.(rand(n) .< 0.05, missing, randn(n)*2 .+ 3) ifelse.(rand(n) .< 0.05, missing, rand(Gamma(2,3), n)) ifelse.(rand(n) .< 0.08, missing, rand(Beta(1, 0.1), n))]
 
 X = [X X[:, 1]+X[:, 2]]
@@ -27,17 +26,13 @@ import Juno: @enter,@run,@profiler
 # Still some issues. Not sure where.
 using Random
 
-spn = learnSPN(D, 0.3)
+@time spn = learnSPN(D, 0.3)
 
 @btime rand(spn, 100)
 # 705.9 microseconds
 
 @btime rand(spn, 100, [1, missing, missing, missing, "C", missing])
 # 945 microseconds
-
-@btime rand(spn, 100, [missing, missing, missing, missing, missing, missing])
-
-@btime rand(spn, 100, Dict(:x₁=>1, :x₅=>"C"))
 
 @btime rand(spn, 100, Dict(1=>1, 5=>"C"))
 # 879 microseconds

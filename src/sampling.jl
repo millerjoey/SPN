@@ -10,6 +10,7 @@ rand(SPN::SumProductNetwork, query::AbstractVector, n = 1) = rand(SPN::SumProduc
 # Allow query to be a dictionary. Dict("x1"=>5, "x2"=>1..2, "x5"=>"C") and assume the rest missing.
 rand(SPN::SumProductNetwork, n::Integer, query::Dict) = rand(SPN, n, queryfromdict(SPN, query))
 
+# Can possibly switch to use multithreading, making a single for loop.
 function rand(SPN::SumProductNetwork, n::Integer, query)
     # force query to contain static arrays maybe?
     for (scope,pool) in SPN.categorical_pool
