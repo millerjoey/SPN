@@ -8,7 +8,7 @@ using Suppressor
 import DataFrames
 import Base: rand, getindex, length
 import StatsBase: counts
-import Distributions: scale, scale!, logpdf
+import Distributions: scale, scale!, logpdf, rand!
 import HypothesisTests: KruskalWallisTest, pvalue, PowerDivergenceTest
 #import StatsBase: countmap,corkendall,cor
 import NamedArrays
@@ -17,10 +17,8 @@ import Statistics: cor
 import LinearAlgebra: diagind
 import Combinatorics: permutations, combinations
 import Clustering: kmeans,kmedoids
-include("nb.jl")
 include("nodes.jl")
 include("show.jl")
-include("allmissing.jl")
 include("probquerying.jl")
 include("sampling.jl")
 include("structurelearning.jl")

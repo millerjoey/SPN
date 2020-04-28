@@ -72,7 +72,7 @@ function fit_dist(x::AbstractVector)
             p = x̄/σ²
             r = x̄^2/(σ²-x̄)
         #D = MixtureModel([C₁, NegativeBinomial(r,p)], [p₀, 1-p₀]) # Mixture, even though support
-            D = NB(r,p)
+            D = NegativeBinomial(r,p)
         end
     else # Floats
         if all(skipmissing(x) .> 0.)
@@ -160,6 +160,7 @@ end
 export cluster,indeptest
 
 function indeptest(X::Vector{<:Number},Y::Vector{<:Number})
+    X,Y = convert(Vector{Float64},X),convert(Vector{Float64},Y)
     p = gammaHSIC(X, Y)
     return ifelse(isnan(p), 1., p)
 end

@@ -115,7 +115,7 @@ uuid = "9fa8497b-333b-5362-9e8d-4d0656e87820"
 
 [[HilbertSchmidtIndependenceCriterion]]
 deps = ["Distances", "LinearAlgebra", "Statistics", "StatsBase", "StatsFuns"]
-git-tree-sha1 = "e1686b9749c4bf5a8575e1a922175d3f6c5644b9"
+git-tree-sha1 = "8b333e05308a11bb344c7bd7cda81d26e65f56aa"
 repo-rev = "master"
 repo-url = "https://github.com/millerjoey/HilbertSchmidtIndependenceCriterion.jl.git"
 uuid = "e2eebb42-73ca-449a-af10-85185432054b"

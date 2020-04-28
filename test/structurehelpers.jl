@@ -30,8 +30,6 @@ end
     @test factor(D[1:20]) == [[1,5],[2,3,4,6]]
 end
 
-
-
 @testset "Distribution Fitting" begin
     Random.seed!(2)
     x_cat = categorical(rand(["a", "b"], 10))
@@ -41,7 +39,19 @@ end
     x_norm = rand(Normal(), 30)
     @test fit_dist(x_norm)==fit(Normal, x_norm)
     x_negbin = [1,2,0,0,1,1,8]
-    @test fit_dist(x_negbin)==NB(0.5794285714285714, 0.2378048780487805)
+    @test fit_dist(x_negbin)==NegativeBinomial(0.5794285714285714, 0.2378048780487805)
     x_gamma = rand(Gamma(), 30)
     @test fit_dist(x_gamma)==Gamma(0.8795818306790851, 1.041271421986373)
+end
+
+@testset "Structure Learning" begin
+    Random.seed!(1)
+    D = Table(x = randn(50), y = categorical(rand(["a", "b", "c"], 50)), z = rand(50))
+    spn = learnSPN(D, 0.3)
+    @test keys(spn.ScM)==columnnames(D)
+    @test spn.ScM.Types==(x=Float64,y=UInt32,z=Float64)
+    @test levels(spn.categorical_pool[2])==["a","b","c"]
+    @test length(spn.categorical_pool)==1
+    @test spn.root isa SPN.ProductNode
+    @test length(children(spn.root))==3
 end

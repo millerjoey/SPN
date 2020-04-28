@@ -83,7 +83,7 @@ function safe_build_dist(D::Type{Poisson}, ϕ)
     return D(λ)
 end
 
-function safe_build_dist(D::Type{NB}, ϕ)
+function safe_build_dist(D::Type{NegativeBinomial}, ϕ)
     r = ϕ[1] + max(0.0001 - ϕ[1], 0)
     p = ϕ[2]
     return D(r, p)
@@ -93,5 +93,5 @@ end
 constructor(D::Normal) = Normal
 constructor(D::Gamma) = Gamma
 constructor(D::Exponential) = Exponential
-constructor(D::NegativeBinomial) = NB
+constructor(D::NegativeBinomial) = NegativeBinomial
 constructor(D::Poisson) = Poisson

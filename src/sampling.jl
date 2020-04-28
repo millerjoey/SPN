@@ -1,7 +1,7 @@
 export rand
 
 ##### Unconditional Sampling #####
-rand(SPN::SumProductNetwork, n::Integer = 1) = rand(SPN, n, AllMissing())
+rand(SPN::SumProductNetwork, n::Integer = 1) = rand(SPN, n, fill(missing, length(SPN.ScM)))
 
 #### Conditional Sampling #####
 
@@ -11,8 +11,9 @@ rand(SPN::SumProductNetwork, query::AbstractVector, n = 1) = rand(SPN::SumProduc
 rand(SPN::SumProductNetwork, n::Integer, query::Dict) = rand(SPN, n, queryfromdict(SPN, query))
 
 # Can possibly switch to use multithreading, making a single for loop.
-function rand(SPN::SumProductNetwork, n::Integer, query)
+function rand(SPN::SumProductNetwork, n::Integer, query::AbstractVector)
     # force query to contain static arrays maybe?
+    query = deepcopy(query)
     for (scope,pool) in SPN.categorical_pool
         if !ismissing(query[scope])
             eltype(query) !== Any && (query = convert(Vector{Any}, query))
@@ -23,22 +24,27 @@ function rand(SPN::SumProductNetwork, n::Integer, query)
             end
         end
     end
-    samps = Dict(i=>(ismissing(query[i]) ? convert(Vector{Union{T,Missing}}, fill(missing, n)) : fill(query[i], n)) for (i,T) in zip(1:length(SPN.ScM), SPN.ScM.Types))
+    samps = Dict{Int,Any}(1:length(SPN.ScM) .=> [Vector{ismissing(query[i]) ? T : typeof(query[i])}(undef, n) for (i,T) in enumerate(SPN.ScM.Types)])
+    for i in eachindex(query)
+        if !ismissing(query[i])
+            samps[i] .= Ref(query[i])
+        end
+    end
     condsamp!(samps, SPN.root, 1:n, query)
     for (scope,pool) in SPN.categorical_pool
-        samps[scope] = [pool.index[s] for s in samps[scope]]
+        samps[scope] = [pool.index[Int(s)] for s in samps[scope]]
     end
     return reduce(hcat, [samps[k] for k in 1:length(samps)])
 end
 
 # Precompute which inds are missing in query so I can skip some steps and not always traverse.
-function condsamp!(samps, node::ProductNode, inds, query)
+function condsamp!(samps::Dict, node::ProductNode, inds, query)
     for c in children(node)
         condsamp!(samps, c, inds, query)
     end
 end
 
-function condsamp!(samps, node::SumNode, inds, query)
+function condsamp!(samps::Dict, node::SumNode, inds, query)
     pdfs = exp.([logpdf(c,query) for c in children(node)])
     w = pdfs .* weights(node)
     z = rand(Categorical(w / sum(w)), length(inds)) # Normalisation due to precision errors.
@@ -48,8 +54,8 @@ function condsamp!(samps, node::SumNode, inds, query)
     end
 end
 
-function condsamp!(samps, node::Leaf, inds, query)
+function condsamp!(samps::Dict, node::Leaf, inds, query)
     if ismissing(query[scope(node)])
-        samps[scope(node)][inds] .= rand(node.dist, length(inds))
+        rand!(node.dist, view(samps[scope(node)], inds))
     end
 end
