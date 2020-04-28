@@ -19,6 +19,8 @@ x5 = categorical([ismissing(el) ? missing : (el > 2 ? "A" : (el < 1  ? "B" : "C"
 x6 = categorical([ismissing(el) ? missing : (el > 10 ? "D" : "E") for el in D.x₄])
 D = Table(D; x₅=x5)
 D = Table(D; x₆=x6)
+
+spn = learnSPN(D, 0.1) # Structure learning.
 ```
 
 ## Sampling
