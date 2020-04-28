@@ -32,7 +32,7 @@ function rand(SPN::SumProductNetwork, n::Integer, query::AbstractVector)
     end
     condsamp!(samps, SPN.root, 1:n, query)
     for (scope,pool) in SPN.categorical_pool
-        samps[scope] = [pool.index[Int(s)] for s in samps[scope]]
+        samps[scope] = [pool.index[Int.(s)] for s in samps[scope]]
     end
     return reduce(hcat, [samps[k] for k in 1:length(samps)])
 end
