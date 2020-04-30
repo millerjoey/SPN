@@ -1,6 +1,6 @@
 # SPN
 
-Structure learning, sampling, conditional sampling, and conditional log pdfs for sum-product networks I made to help a work project. Compatible with categorical data, missing data.
+Structure learning, sampling, conditional sampling, and conditional log pdfs for sum-product networks I made to explore a research project. Compatible with categorical data, missing data.
 
 Shout out to [Martin Trapp](https://github.com/trappmartin) whose SumProductNetwork package inspired me to try to use AD for weight and leaf-distribution parameter learning! I failed, but added some other features...
 
