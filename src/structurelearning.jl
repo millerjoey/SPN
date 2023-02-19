@@ -122,11 +122,11 @@ function replace_missings(D::Table)
                 col = col .- mean(skipmissing(col))
                 col[ismissing.(col)] .= 0
                 col = convert(Vector{nonmissingtype(eltype(col))}, col)
-            elseif nonmissingtype(eltype(col)) <: CategoricalString
+            elseif nonmissingtype(eltype(col)) <: CategoricalValue
                 "?" in levels(col) ? error("Attempting to recode categorical missing to value: \"?\"") : nothing
                 col = recode(col, missing=>"?")
             else
-                error("Features must have Number or CategoricalString eltypes (Missings allowed).")
+                error("Features must have Number or CategoricalValue eltypes (Missings allowed).")
             end
         end
         push!(dat, col)
