@@ -59,7 +59,7 @@ end
 export add_univariate_leaf!
 export fit_dist
 function fit_dist(x::AbstractCategoricalVector)
-    D = Missing <: eltype(x) ? fit(Categorical, [el.level for el in skipmissing(x)]) : fit(Categorical, [el.level for el in x])
+    D = Missing <: eltype(x) ? fit(Categorical, [el.ref for el in skipmissing(x)]) : fit(Categorical, [el.ref for el in x])
     return D
 end
 

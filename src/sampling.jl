@@ -18,13 +18,21 @@ function rand(SPN::SumProductNetwork, n::Integer, query::AbstractVector)
         if !ismissing(query[scope])
             eltype(query) !== Any && (query = convert(Vector{Any}, query))
             if isa(query[scope], AbstractVector)
-                query[scope] = [pool.invindex[v] for v in query[scope]]
+                query[scope] = [pool.invindex[v] for v in query[scope]] # Invindex maps "A" -> 0x01 TODO need fix still
             elseif isa(query[scope], String)
                 query[scope] = pool.invindex[query[scope]]
             end
         end
     end
-    samps = Dict{Int,Any}(1:length(SPN.ScM) .=> [Vector{ismissing(query[i]) ? T : typeof(query[i])}(undef, n) for (i,T) in enumerate(SPN.ScM.Types)])
+    samps = Dict{Int, Any}()
+    for i in 1:length(SPN.ScM)
+        eltype = SPN.ScM.Types[i]
+        if eltype <: CategoricalValue
+            samps[i] = Vector{ismissing(query[i]) ? UInt32 : typeof(query[i])}(undef, n)
+        else
+            samps[i] = Vector{ismissing(query[i]) ? SPN.ScM.Types[i] : typeof(query[i])}(undef, n)
+        end
+    end
     for i in eachindex(query)
         if !ismissing(query[i])
             samps[i] .= Ref(query[i])
@@ -32,7 +40,7 @@ function rand(SPN::SumProductNetwork, n::Integer, query::AbstractVector)
     end
     condsamp!(samps, SPN.root, 1:n, query)
     for (scope,pool) in SPN.categorical_pool
-        samps[scope] = [pool.index[Int.(s)] for s in samps[scope]]
+        samps[scope] = [pool.levels[Int.(s)] for s in samps[scope]]
     end
     return reduce(hcat, [samps[k] for k in 1:length(samps)])
 end
