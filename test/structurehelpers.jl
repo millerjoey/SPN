@@ -1,5 +1,5 @@
 # Structure Learning Misc. Tests
-using Random, Combinatorics, CategoricalArrays
+using Random, Combinatorics, CategoricalArrays, StableRNGs
 using TypedTables
 
 
