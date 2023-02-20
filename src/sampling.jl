@@ -26,12 +26,7 @@ function rand(SPN::SumProductNetwork, n::Integer, query::AbstractVector)
     end
     samps = Dict{Int, Any}()
     for i in 1:length(SPN.ScM)
-        eltype = SPN.ScM.Types[i]
-        if eltype <: CategoricalValue
-            samps[i] = Vector{ismissing(query[i]) ? UInt32 : typeof(query[i])}(undef, n)
-        else
-            samps[i] = Vector{ismissing(query[i]) ? SPN.ScM.Types[i] : typeof(query[i])}(undef, n)
-        end
+        samps[i] = Vector{ismissing(query[i]) ? SPN.ScM.Types[i] : typeof(query[i])}(undef, n)
     end
     for i in eachindex(query)
         if !ismissing(query[i])

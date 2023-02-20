@@ -36,7 +36,7 @@ struct ScopeMap
     Types::T where T<:NamedTuple
 end
 function ScopeMap(nms::Tuple, types::Tuple)
-    types = ifelse.((<:).(types, AbstractString), UInt32, types) # Categoricals repr as uints
+    types = ifelse.((<:).(types, Union{AbstractString,CategoricalValue}), UInt32, types) # Categoricals repr as uints
     return ScopeMap(NamedTuple{nms}(collect(1:length(nms))), NamedTuple{Tuple(nms)}(types))
 end
 
