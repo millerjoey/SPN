@@ -54,4 +54,4 @@ _logpdf(N::Leaf, x::Interval{:closed,:open}) = log(cdf(N.dist, x.right - eps(Flo
 _logpdf(N::Leaf, x::Missing) = 0.
 _logpdf(N::Leaf, x::Real) = logpdf(N.dist, x)
 
-_logpdf(N::Leaf{<:DiscreteNonParametric}, x::AbstractVector) = log(sum(pdf.(N.dist, x)))
+_logpdf(N::Leaf{<:DiscreteNonParametric}, x::AbstractVector) = log(sum(x_i -> pdf(N.dist, x_i), x))

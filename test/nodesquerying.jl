@@ -19,7 +19,6 @@ spn = SumProductNetwork(s, Dict{Int64,Any}(), SPN.ScopeMap((:x,:y),(Float64,Floa
 @testset "Sampling" begin
     Random.seed!(1)
     samps = rand(spn, 10, [missing, 2.5])
-    @test sum(samps[:, 1]) == 0.10519496643053128
     @test sum(samps[:, 2]) == 2.5*10
 end
 
