@@ -1,6 +1,6 @@
 name = "SPN"
 uuid = "c075248c-8d6e-11e9-3aae-e55d1ec06ef0"
-authors = ["Miller, Joseph (jx1525) <arch1190@gmail.com>"]
+authors = ["Miller, Joseph <arch1190@gmail.com>"]
 version = "0.1.0"
 
 [deps]
