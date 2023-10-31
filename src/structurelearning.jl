@@ -116,7 +116,7 @@ convert_missing(ar) = ar
 # Finish this....
 function replace_missings(D::Table)
     dat = []
-    for (nm,col) in zip(columnnames(D), columns(D))
+    for col in columns(D)
         if Missing <: eltype(col)
             if nonmissingtype(eltype(col)) <: Number
                 col = col .- mean(skipmissing(col))
@@ -128,6 +128,8 @@ function replace_missings(D::Table)
             else
                 error("Features must have Number or CategoricalValue eltypes (Missings allowed).")
             end
+        else
+            col = copy(col)
         end
         push!(dat, col)
     end
