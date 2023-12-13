@@ -45,6 +45,8 @@ select(X, indices::NTuple{T,Integer}) where T = select(X, columnnames(X)[collect
 select(X, indices::Vector{<:Integer}) = select(X, columnnames(X)[indices])
 select(X, index::Integer) = columns(X)[index]
 
+dims(X) = size(X)
+dims(X, dim) = size(X)[dim]
 dims(X::Table) = length(X), length(columnnames(X))
 dims(X::Table, dim) = dims(X)[dim]
 
