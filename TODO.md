@@ -6,7 +6,6 @@
 - Add optimizer controls beyond a fixed Adam learning rate, including optimizer selection, early stopping, callbacks, and history metadata.
 - Add regularization and priors for sum weights and leaf parameters.
 - Support finite interval observations for discrete leaves without enumeration where possible.
-- Support infinite interval observations for discrete leaves.
 - Decide semantics for finite set-valued continuous observations; current training support treats intervals as the continuous censored-data path.
 - Add support for more `Distributions.jl` leaf types or a documented extension interface for custom leaves.
 - Add serialization for trained parameter vectors and `ParamMap`.

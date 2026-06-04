@@ -90,6 +90,22 @@ end
     @test all(isfinite, g)
 end
 
+@testset "Autodiff trains infinite discrete intervals" begin
+    for leaf in (Leaf(Poisson(2.0), 1), Leaf(NegativeBinomial(4.0, 0.35), 1))
+        spn = SumProductNetwork(leaf, Dict{Int64,Any}(), SPN.ScopeMap((:x,), (Int,)))
+        X = reshape(Any[2..Inf, -Inf..1, 0..Inf, missing], :, 1)
+        θ0, pm = initial_params(spn)
+        loss(θ) = -meanlogpdf(spn, X, θ, pm)
+        g = only(Zygote.gradient(loss, θ0))
+
+        @test isfinite(loss(θ0))
+        @test all(isfinite, g)
+        θ, pm, history = fit_params(spn, X; θ0 = θ0, pm = pm, maxiters = 2, verbose = false)
+        @test all(isfinite, θ)
+        @test all(isfinite, history)
+    end
+end
+
 @testset "Autodiff trains categorical set observations" begin
     D0 = Table(y = categorical(["A", "B", "C", "A", "B", "A"]))
     spn = learnSPN(D0, 0.2)

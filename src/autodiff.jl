@@ -241,7 +241,7 @@ function _validate_observation(x, kinds::Vector{Symbol}, iscategorical::Bool, na
         iscategorical && throw(ArgumentError("Categorical interval observations are unsupported for column $(name), row $(row); use a finite set of category levels."))
         for kind in kinds
             if kind === :poisson || kind === :negbin
-                _validate_finite_interval(x, name, row)
+                _validate_discrete_interval(x, name, row)
             elseif !(kind === :normal || kind === :gamma)
                 throw(ArgumentError("Interval observations are unsupported for $kind leaves in column $(name), row $(row)."))
             end
@@ -270,9 +270,10 @@ function _validate_set_observation(xs, kind::Symbol, iscategorical::Bool, name, 
     return nothing
 end
 
-function _validate_finite_interval(x::AbstractInterval, name, row)
+function _validate_discrete_interval(x::AbstractInterval, name, row)
     lo, hi = leftendpoint(x), rightendpoint(x)
-    (isfinite(lo) && isfinite(hi)) || throw(ArgumentError("Discrete interval observation for column $(name), row $(row) must have finite endpoints."))
+    (lo isa Real && hi isa Real) ||
+        throw(ArgumentError("Discrete interval observation for column $(name), row $(row) must have numeric endpoints."))
     return nothing
 end
 
@@ -502,10 +503,36 @@ function _leaf_interval_logpdf(kind::Symbol, ϕ, x::AbstractInterval)
         θ = _softplus(ϕ[2]) + _POS_EPS
         lo, hi = leftendpoint(x), rightendpoint(x)
         return _logprobdiff(_gamma_cdf(hi, α, θ), _gamma_cdf(lo, α, θ))
-    elseif kind === :poisson || kind === :negbin || kind === :categorical
+    elseif kind === :poisson || kind === :negbin
+        return _leaf_discrete_interval_logpdf(kind, ϕ, x)
+    elseif kind === :categorical
         return _leaf_set_logpdf(kind, ϕ, _integer_values(x))
     end
     error("Interval observations are unsupported for leaf kind: $kind")
+end
+
+function _leaf_discrete_interval_logpdf(kind::Symbol, ϕ, x::AbstractInterval)
+    isempty(x) && return -Inf
+    lower, upper = _integer_bounds(x)
+    if upper !== nothing && upper < 0
+        return -Inf
+    end
+    if lower !== nothing
+        lower = max(lower, 0)
+    end
+
+    if lower === nothing && upper === nothing
+        return zero(eltype(ϕ))
+    elseif lower === nothing
+        return _leaf_set_logpdf(kind, ϕ, 0:upper)
+    elseif upper === nothing
+        lower <= 0 && return zero(eltype(ϕ))
+        excluded = _leaf_set_logpdf(kind, ϕ, 0:(lower - 1))
+        return _log1mexp(excluded)
+    else
+        upper < lower && return -Inf
+        return _leaf_set_logpdf(kind, ϕ, lower:upper)
+    end
 end
 
 function _leaf_set_logpdf(kind::Symbol, ϕ, xs)
@@ -523,11 +550,22 @@ end
 _is_integer_observation(x) = x isa Integer || (x isa Real && isinteger(x))
 
 function _integer_values(x::AbstractInterval)
-    lo, hi = leftendpoint(x), rightendpoint(x)
-    (!isfinite(lo) || !isfinite(hi)) && error("Discrete interval observations must have finite endpoints")
-    first = isleftclosed(x) ? ceil(Int, lo) : floor(Int, lo) + 1
-    last = isrightclosed(x) ? floor(Int, hi) : ceil(Int, hi) - 1
+    first, last = _integer_bounds(x)
+    (first === nothing || last === nothing) && error("Discrete interval observations must have finite endpoints")
     return first:last
+end
+
+function _integer_bounds(x::AbstractInterval)
+    lo, hi = leftendpoint(x), rightendpoint(x)
+    first = lo == -Inf ? nothing : isleftclosed(x) ? ceil(Int, lo) : floor(Int, lo) + 1
+    last = hi == Inf ? nothing : isrightclosed(x) ? floor(Int, hi) : ceil(Int, hi) - 1
+    return first, last
+end
+
+function _log1mexp(x)
+    x == -Inf && return zero(x)
+    x >= 0 && return -Inf
+    return x < -log(2) ? log1p(-exp(x)) : log(-expm1(x))
 end
 
 function _logprobdiff(hi, lo)
