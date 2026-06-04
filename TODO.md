@@ -11,7 +11,6 @@
 - Add serialization for trained parameter vectors and `ParamMap`.
 
 ## Structure Learning
-- Harden missing-value handling in clustering/factorization and replace the current recoding approach with explicit, tested behavior.
 - Review the distribution fitting heuristic for integer data, especially edge cases with zero variance and overdispersion.
 - Add deterministic controls for all random structure-learning paths.
 

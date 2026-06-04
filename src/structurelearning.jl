@@ -8,6 +8,7 @@ export learnSPN
 
 
 function learnSPN(X, α_init=0.1)
+    _validate_learnSPN_data(X)
     α = ℵ(α_init, α_init) # ("global" alpha, "local" alpha)
     init = SumNode() # Can always Init with a sum node. Weight = 1 by default so just add below it.
     scopemap = ScopeMap(columnnames(X), nonmissingtype.(eltype.(values(columns(X)))))
@@ -56,14 +57,39 @@ end
 
 export add_univariate_leaf!
 export fit_dist
+
+function _validate_learnSPN_data(X)
+    for (nm, col) in zip(columnnames(X), columns(X))
+        _validate_learnSPN_column(nm, col)
+    end
+    return nothing
+end
+
+function _validate_learnSPN_column(name, col)
+    any(x -> !ismissing(x), col) ||
+        throw(ArgumentError("Column $(name) has no observed values; cannot learn an SPN leaf distribution."))
+    T = nonmissingtype(eltype(col))
+    (T <: Number || col isa AbstractCategoricalVector) ||
+        throw(ArgumentError("Column $(name) has unsupported eltype $(eltype(col)); expected numeric or categorical data."))
+    return nothing
+end
+
+function _observed_values(x)
+    vals = collect(skipmissing(x))
+    isempty(vals) && throw(ArgumentError("Cannot fit a distribution to a column with no observed values."))
+    return vals
+end
+
 function fit_dist(x::AbstractCategoricalVector)
-    D = Missing <: eltype(x) ? fit(Categorical, [el.ref for el in skipmissing(x)]) : fit(Categorical, [el.ref for el in x])
+    vals = _observed_values(x)
+    D = fit(Categorical, [el.ref for el in vals])
     return D
 end
 
 function fit_dist(x::AbstractVector)
-    if all(isinteger.(skipmissing(x)))
-        x̄, σ² = Missing <: eltype(x) ? (mean(skipmissing(x)), var(skipmissing(x))) : (mean(x), var(x))
+    vals = _observed_values(x)
+    if all(isinteger.(vals))
+        x̄, σ² = mean(vals), var(vals)
         if σ² ≤ x̄ # Let's do Poisson
             D = Poisson(x̄)
         else
@@ -73,10 +99,10 @@ function fit_dist(x::AbstractVector)
             D = NegativeBinomial(r,p)
         end
     else # Floats
-        if all(skipmissing(x) .> 0.)
-            D = Missing <: eltype(x) ? fit(Gamma, collect(skipmissing(x))) : fit(Gamma, x)
+        if all(vals .> 0.)
+            D = fit(Gamma, vals)
         else
-            D = Missing <: eltype(x) ? fit(Normal, collect(skipmissing(x))) : fit(Normal, x)
+            D = fit(Normal, vals)
         end
     end
     return D
@@ -111,32 +137,51 @@ convert_missing(ar::Vector{Union{Missing,T}}) where {T<:Real} = convert(Vector{T
 convert_missing(ar::AbstractCategoricalVector{Union{Missing,T}}) where {T<:String} = convert(CategoricalVector{T}, ar)
 convert_missing(ar) = ar
 
-# Finish this....
 function replace_missings(D::Table)
+    ready = _cluster_ready_table(D)
+    ready === nothing && throw(ArgumentError("Cannot prepare clustering data with all-missing columns."))
+    return ready
+end
+
+function _cluster_ready_table(D::Table)
     dat = []
-    for col in columns(D)
-        col = copy(col)
-        if Missing <: eltype(col)
-            if nonmissingtype(eltype(col)) <: Number
-                col = col .- mean(skipmissing(col))
-                col[ismissing.(col)] .= 0
-                col = convert(Vector{nonmissingtype(eltype(col))}, col)
-            elseif nonmissingtype(eltype(col)) <: CategoricalValue
-                "?" in levels(col) ? error("Attempting to recode categorical missing to value: \"?\"") : nothing
-                col = recode(col, missing=>"?")
-            else
-                error("Features must have Number or CategoricalValue eltypes (Missings allowed).")
-            end
-        end
-        push!(dat, col)
+    for (nm, col) in zip(columnnames(D), columns(D))
+        ready_col = _cluster_ready_column(col, nm)
+        ready_col === nothing && return nothing
+        push!(dat, ready_col)
     end
     return Table(NamedTuple{columnnames(D)}(dat))
 end
 
+function _cluster_ready_column(col::AbstractCategoricalVector, name)
+    refs = [el.ref for el in skipmissing(col)]
+    isempty(refs) && return nothing
+    Missing <: eltype(col) || return col
+    mode_ref = _modal_ref(refs, length(levels(col)))
+    out = copy(col)
+    out[ismissing.(out)] .= levels(col)[mode_ref]
+    return out
+end
+
+function _cluster_ready_column(col, name)
+    T = nonmissingtype(eltype(col))
+    if T <: Number
+        vals = collect(skipmissing(col))
+        isempty(vals) && return nothing
+        μ = mean(vals)
+        return [ismissing(x) ? Float64(μ) : Float64(x) for x in col]
+    end
+    throw(ArgumentError("Column $(name) has unsupported eltype $(eltype(col)); expected numeric or categorical data."))
+end
+
+function _modal_ref(refs, nlevels::Int)
+    level_counts = counts(refs, 1:nlevels)
+    return argmax(level_counts)
+end
+
 function cluster(X, min_obs = 5)
-    # Need to skipmissing or find some way to handle missings.
-    # Instead, just replace missing with the column mean and cast it as another level for the categoricals.
-    D = replace_missings(X)
+    D = _cluster_ready_table(X)
+    D === nothing && return (())
     U,Δ,_ = pcamix(D)
     coords = U*Δ
     if size(coords, 2) < 1 || size(coords, 1) < 3 # Categorical, all same level, or n <= k
@@ -158,6 +203,8 @@ end
 
 export cluster,indeptest
 
+_observed_refs(Y::CategoricalArray) = unique(filter(!=(0), Y.refs))
+
 function indeptest(X::Vector{<:Number},Y::Vector{<:Number})
     X,Y = convert(Vector{Float64},X),convert(Vector{Float64},Y)
     p = gammaHSIC(X, Y)
@@ -167,7 +214,7 @@ end
 function indeptest(X::Vector{<:Number},Y::CategoricalArray)
     # Just doing a Kruskal Wallis test
     # Need to split X into groups defined by Y and call KruskallWallisTest()
-    if length(Y.pool)==1
+    if length(_observed_refs(Y)) <= 1
         return(1.)
     else
         kwtest = @suppress begin
@@ -180,9 +227,12 @@ end
 
 export splitby
 function splitby(X::Vector{<:Number}, F::CategoricalArray)
-    split_X = [typeof(X)() for _ in 1:length(F.pool)]
+    refs = sort(_observed_refs(F))
+    ref_index = Dict(ref => i for (i, ref) in enumerate(refs))
+    split_X = [typeof(X)() for _ in refs]
     for (x,f) in zip(X,F.refs)
-        push!(split_X[f], x)
+        f == 0 && continue
+        push!(split_X[ref_index[f]], x)
     end
     return(split_X)
 end
@@ -190,7 +240,11 @@ end
 indeptest(X::CategoricalArray,Y::Vector{<:Number}) = indeptest(Y,X)
 
 function indeptest(X::CategoricalArray,Y::CategoricalArray)
-    d = counts(X.refs, Y.refs)
+    nonmissing = (X.refs .!= 0) .& (Y.refs .!= 0)
+    sum(nonmissing) < 2 && return 1.
+    xrefs, yrefs = X.refs[nonmissing], Y.refs[nonmissing]
+    (length(unique(xrefs)) <= 1 || length(unique(yrefs)) <= 1) && return 1.
+    d = counts(xrefs, yrefs)
     if any(size(d).==1)
         return(1.)
     end
@@ -199,16 +253,17 @@ end
 
 # Modify to find "approximate independence", otherwise will always reject hypothesis with enough data.
 # Right now, this problem is addressed by limiting # of obs for indep tests.
-function test_similarity(X; ntest_samps = 100) # p val for test with H_0: independence.
+function test_similarity(X; ntest_samps = 100, min_pairwise_obs = 2) # p val for test with H_0: independence.
     P = NamedArray(Array{Float64,2}(undef,(dims(X, 2), dims(X, 2))), (collect(columnnames(X)), collect(columnnames(X)))) # 1 means dependent.
     P[diagind(P)] .= 0.
     for colpair in combinations(columnnames(X), 2)
         i,j = colpair[1],colpair[2]
         nonmissing_inds = .!ismissing.(select(X, i)) .& .!ismissing.(select(X, j))
-        if sum(nonmissing_inds) == 0
+        n_nonmissing = sum(nonmissing_inds)
+        if n_nonmissing < min_pairwise_obs
             P[i,j] = P[j,i] = 1. # i.e. assume Independent
         else
-            samps = sum(nonmissing_inds) > ntest_samps ? sample(1:sum(nonmissing_inds), ntest_samps) : 1:sum(nonmissing_inds)
+            samps = n_nonmissing > ntest_samps ? sample(1:n_nonmissing, ntest_samps) : 1:n_nonmissing
             P[i,j] = P[j,i] = indeptest(convert_missing(select(X, i)[nonmissing_inds][samps]), convert_missing(select(X, j)[nonmissing_inds][samps]))
         end
     end

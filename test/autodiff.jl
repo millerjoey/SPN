@@ -78,6 +78,26 @@ end
     @test all(isfinite, history)
 end
 
+@testset "Autodiff trains with missing observations" begin
+    leaf = Leaf(Normal(0.0, 1.0), 1)
+    spn = SumProductNetwork(leaf, Dict{Int64,Any}(), SPN.ScopeMap((:x,), (Float64,)))
+    X = reshape(Any[missing, 1.0, 2.0, missing], :, 1)
+    θ0, pm = initial_params(spn)
+    loss(θ) = -meanlogpdf(spn, X, θ, pm)
+    g = only(Zygote.gradient(loss, θ0))
+
+    @test isfinite(loss(θ0))
+    @test all(isfinite, g)
+    θ, pm, history = fit_params(spn, X; θ0 = θ0, pm = pm, maxiters = 2, verbose = false)
+    @test all(isfinite, θ)
+    @test all(isfinite, history)
+
+    X_missing = reshape(Any[missing, missing], :, 1)
+    θ_missing, _, history_missing = fit_params(spn, X_missing; θ0 = θ0, pm = pm, maxiters = 2, verbose = false)
+    @test θ_missing == θ0
+    @test history_missing == [-0.0, -0.0]
+end
+
 @testset "Autodiff trains finite discrete intervals" begin
     leaf = Leaf(Poisson(2.0), 1)
     spn = SumProductNetwork(leaf, Dict{Int64,Any}(), SPN.ScopeMap((:x,), (Int,)))

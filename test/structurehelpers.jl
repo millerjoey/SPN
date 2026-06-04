@@ -1,5 +1,5 @@
 # Structure Learning Misc. Tests
-using Random, Combinatorics, CategoricalArrays, StableRNGs
+using Random, Combinatorics, CategoricalArrays, StableRNGs, Statistics, Distributions
 using TypedTables
 
 
@@ -7,6 +7,30 @@ using TypedTables
     rng = StableRNG(123)
     D = Table(x1=randn(rng,10), x2=randn(rng,10), x3=categorical(rand(rng,["a", "b"], 10)), x4=categorical(rand(rng,["x", "y"], 10)))
     @test length(cluster(D, 3))==2
+end
+
+@testset "Missing-value structure preprocessing" begin
+    D = Table(
+        x = Union{Missing,Float64}[1.0, missing, 3.0, 4.0],
+        y = categorical(Union{Missing,String}["a", missing, "b", "a"]),
+    )
+    ready = SPN.replace_missings(D)
+
+    @test !any(ismissing, ready.x)
+    @test !any(ismissing, ready.y)
+    @test ready.x[2] == mean(skipmissing(D.x))
+    @test !("?" in levels(ready.y))
+    @test levels(ready.y) == ["a", "b"]
+
+    sparse = Table(x = Union{Missing,Float64}[1.0, missing], y = Union{Missing,Float64}[missing, 2.0])
+    H = test_similarity(sparse)
+    @test H[:x, :y] == 1.0
+
+    one_level = categorical(["a", "a", "a"])
+    @test indeptest([1.0, 2.0, 3.0], one_level) == 1.0
+
+    all_missing = Table(x = Union{Missing,Float64}[missing, missing])
+    @test_throws ArgumentError learnSPN(all_missing, 0.2)
 end
 
 @testset "Factoring" begin

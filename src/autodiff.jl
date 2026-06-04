@@ -685,9 +685,10 @@ function _assert_finite_vector(xs, pm::ParamMap, stage::Symbol, iter::Int)
 end
 
 function _assert_gradient(g, pm::ParamMap, iter::Int)
-    g === nothing && throw(NonFiniteTrainingError(:gradient, iter, nothing, nothing, nothing, nothing, nothing))
     return _assert_finite_vector(g, pm, :gradient, iter)
 end
+
+_materialize_gradient(g, θ) = g === nothing ? zero.(θ) : g
 
 function _param_context(pm::ParamMap, idx::Int)
     for (node_id, range) in pm.ranges
@@ -732,7 +733,7 @@ function fit_params(
     for it in 1:maxiters
         l, back = Zygote.pullback(loss, θ)
         _assert_finite_scalar(l, pm, :loss, it)
-        g = first(back(one(l)))
+        g = _materialize_gradient(first(back(one(l))), θ)
         _assert_gradient(g, pm, it)
         st, θ = Optimisers.update(st, θ, g)
         _assert_finite_vector(θ, pm, :updated_parameters, it)
