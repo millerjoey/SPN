@@ -1,8 +1,7 @@
 # TODO
 
 ## Parameter Learning
-- Add nonfinite training diagnostics: stop when loss, gradients, or parameters become nonfinite and report the offending node/parameter range.
-- Extend data validation to cover parameter-map/SPN mismatches and provide structured error types if the API becomes public.
+- Consider structured validation error types if the training API becomes public beyond `ArgumentError`.
 - Add minibatching and validation support.
 - Add optimizer controls beyond a fixed Adam learning rate, including optimizer selection, early stopping, callbacks, and history metadata.
 - Add regularization and priors for sum weights and leaf parameters.

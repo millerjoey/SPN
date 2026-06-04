@@ -6,6 +6,15 @@ using CategoricalArrays
 using IntervalSets
 using TypedTables
 
+function _captured_error(f)
+    try
+        f()
+        return nothing
+    catch err
+        return err
+    end
+end
+
 @testset "Autodiff parameter learning" begin
     rng = StableRNG(42)
     leaf = Leaf(Normal(0.0, 1.0), 1)
@@ -108,4 +117,68 @@ end
 
     encoded = encode_data(cat_spn, Table(y = ["A", ["A", "B"]]))
     @test isfinite(meanlogpdf(cat_spn, encoded, θc, pmc; encoded = true))
+end
+
+@testset "Autodiff validates parameter maps" begin
+    leaf = Leaf(Normal(), 1)
+    spn = SumProductNetwork(leaf, Dict{Int64,Any}(), SPN.ScopeMap((:x,), (Float64,)))
+    X = reshape([0.0, 1.0], :, 1)
+    θ, pm = initial_params(spn)
+
+    short_θ = θ[1:1]
+    @test_throws ArgumentError meanlogpdf(spn, X, short_θ, pm)
+
+    missing_ranges = ParamMap(Dict{UInt128,UnitRange{Int}}(), copy(pm.leaf_kind))
+    @test_throws ArgumentError meanlogpdf(spn, X, θ, missing_ranges)
+
+    bad_ranges = copy(pm.ranges)
+    bad_ranges[leaf.id] = 1:1
+    @test_throws ArgumentError meanlogpdf(spn, X, θ, ParamMap(bad_ranges, copy(pm.leaf_kind)))
+
+    bad_leaf_kind = copy(pm.leaf_kind)
+    bad_leaf_kind[leaf.id] = :gamma
+    @test_throws ArgumentError meanlogpdf(spn, X, θ, ParamMap(copy(pm.ranges), bad_leaf_kind))
+end
+
+@testset "Autodiff reports nonfinite training states" begin
+    leaf = Leaf(Normal(), 1)
+    spn = SumProductNetwork(leaf, Dict{Int64,Any}(), SPN.ScopeMap((:x,), (Float64,)))
+    X = reshape([2.0], :, 1)
+    θ0, pm = initial_params(spn)
+
+    bad_θ = copy(θ0)
+    bad_θ[1] = NaN
+    err = _captured_error() do
+        fit_params(spn, X; θ0 = bad_θ, pm = pm, maxiters = 1, verbose = false)
+    end
+    @test err isa NonFiniteTrainingError
+    @test err.stage === :initial_parameters
+    @test err.index == 1
+    @test err.node_kind === :normal
+    @test err.range == pm.ranges[leaf.id]
+
+    err = _captured_error() do
+        SPN._assert_gradient([0.0, NaN], pm, 7)
+    end
+    @test err isa NonFiniteTrainingError
+    @test err.stage === :gradient
+    @test err.iter == 7
+    @test err.index == 2
+
+    gamma_spn = SumProductNetwork(Leaf(Gamma(0.5, 1.0), 1), Dict{Int64,Any}(), SPN.ScopeMap((:x,), (Float64,)))
+    err = _captured_error() do
+        fit_params(gamma_spn, reshape([0.0], :, 1); maxiters = 1, verbose = false)
+    end
+    @test err isa NonFiniteTrainingError
+    @test err.stage === :loss
+    @test err.iter == 1
+    @test err.index === nothing
+
+    err = _captured_error() do
+        fit_params(spn, X; θ0 = θ0, pm = pm, maxiters = 1, lr = Inf, verbose = false)
+    end
+    @test err isa NonFiniteTrainingError
+    @test err.stage === :updated_parameters
+    @test err.iter == 1
+    @test err.index !== nothing
 end

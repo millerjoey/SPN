@@ -1,4 +1,4 @@
-export ParamMap, EncodedData
+export ParamMap, EncodedData, NonFiniteTrainingError
 export encode_data, initial_params, meanlogpdf
 export fit_params, fit_parameters, with_params
 
@@ -43,9 +43,35 @@ struct EncodedData{C}
     nrows::Int
 end
 
+struct NonFiniteTrainingError <: Exception
+    stage::Symbol
+    iter::Int
+    value
+    index::Union{Nothing,Int}
+    node_id::Union{Nothing,UInt128}
+    node_kind::Union{Nothing,Symbol}
+    range::Union{Nothing,UnitRange{Int}}
+end
+
+function Base.showerror(io::IO, err::NonFiniteTrainingError)
+    print(io, "Nonfinite autodiff training value during ", err.stage)
+    err.iter > 0 && print(io, " at iteration ", err.iter)
+    print(io, ": ", err.value)
+    if err.index !== nothing
+        print(io, " at parameter index ", err.index)
+    end
+    if err.node_id !== nothing
+        print(io, " for ", err.node_kind, " node ", err.node_id)
+    end
+    if err.range !== nothing
+        print(io, " with parameter range ", err.range)
+    end
+end
+
 @inline _get(data::EncodedData, row::Int, col::Int) = data.cols[col][row]
 
 function validate_training_data(spn::SumProductNetwork, X, pm::ParamMap; encoded::Bool = false)
+    _validate_param_map(spn, pm)
     schema = _training_schema(spn, X; encoded = encoded)
     kinds = _leaf_kinds_by_scope(spn, pm)
     for j in 1:schema.ncols
@@ -136,6 +162,70 @@ function _leaf_kinds_by_scope(spn::SumProductNetwork, pm::ParamMap)
     end
     visit(spn.root)
     return Dict(k => unique(v) for (k, v) in kinds)
+end
+
+function _validate_param_map(spn::SumProductNetwork, pm::ParamMap, θ = nothing)
+    expected = Dict{UInt128,Tuple{Symbol,Int}}()
+    leaf_ids = Set{UInt128}()
+
+    function visit(n::Node)
+        if n isa SumNode
+            expected[n.id] = (:sum, length(children(n)))
+            foreach(visit, children(n))
+        elseif n isa ProductNode
+            foreach(visit, children(n))
+        elseif n isa Leaf
+            kind, ϕ0 = _leaf_unconstrained(spn, n)
+            expected[n.id] = (kind, length(ϕ0))
+            push!(leaf_ids, n.id)
+        else
+            error("Unsupported node type: $(typeof(n))")
+        end
+    end
+
+    visit(spn.root)
+
+    expected_ids = Set(keys(expected))
+    for (id, (kind, nparams)) in expected
+        haskey(pm.ranges, id) || throw(ArgumentError("ParamMap is missing a parameter range for $kind node $id."))
+        length(pm.ranges[id]) == nparams ||
+            throw(ArgumentError("ParamMap range for $kind node $id has length $(length(pm.ranges[id])); expected $nparams."))
+        if kind === :sum
+            !haskey(pm.leaf_kind, id) ||
+                throw(ArgumentError("ParamMap leaf_kind has an entry for sum node $id; only leaves should have leaf kinds."))
+        else
+            haskey(pm.leaf_kind, id) || throw(ArgumentError("ParamMap is missing a leaf kind for $kind leaf node $id."))
+            pm.leaf_kind[id] === kind ||
+                throw(ArgumentError("ParamMap leaf kind for node $id is $(pm.leaf_kind[id]); expected $kind."))
+        end
+    end
+
+    extra_ranges = setdiff(Set(keys(pm.ranges)), expected_ids)
+    isempty(extra_ranges) ||
+        throw(ArgumentError("ParamMap contains a range for unknown node $(first(extra_ranges))."))
+
+    extra_leaf_kinds = setdiff(Set(keys(pm.leaf_kind)), leaf_ids)
+    isempty(extra_leaf_kinds) ||
+        throw(ArgumentError("ParamMap contains a leaf kind for unknown or non-leaf node $(first(extra_leaf_kinds))."))
+
+    θ === nothing || _validate_param_ranges(pm, length(θ))
+    return nothing
+end
+
+function _validate_param_ranges(pm::ParamMap, nparams::Int)
+    seen = Set{Int}()
+    for (id, r) in pm.ranges
+        first(r) >= 1 || throw(ArgumentError("ParamMap range for node $id starts at $(first(r)); expected a positive index."))
+        last(r) <= nparams ||
+            throw(ArgumentError("ParamMap range for node $id ends at $(last(r)), but the parameter vector has length $nparams."))
+        for idx in r
+            idx in seen && throw(ArgumentError("ParamMap range for node $id overlaps another range at parameter index $idx."))
+            push!(seen, idx)
+        end
+    end
+    length(seen) == nparams ||
+        throw(ArgumentError("Parameter vector has length $nparams, but ParamMap covers $(length(seen)) parameter indices."))
+    return nothing
 end
 
 function _validate_training_column(col, kinds::Vector{Symbol}, iscategorical::Bool, name::AbstractString)
@@ -306,11 +396,13 @@ end
 function meanlogpdf(spn::SumProductNetwork, X, θ::AbstractVector, pm::ParamMap; encoded::Bool = false)
     data = if encoded
         ChainRulesCore.ignore_derivatives() do
+            _validate_param_map(spn, pm, θ)
             validate_training_data(spn, X, pm; encoded = true)
         end
         X
     else
         ChainRulesCore.ignore_derivatives() do
+            _validate_param_map(spn, pm, θ)
             validate_training_data(spn, X, pm)
             encode_data(spn, X)
         end
@@ -498,6 +590,31 @@ function _leaf_dist(kind::Symbol, ϕ)
     error("Unsupported leaf kind: $kind")
 end
 
+function _assert_finite_scalar(x, pm::ParamMap, stage::Symbol, iter::Int)
+    isfinite(x) && return nothing
+    throw(NonFiniteTrainingError(stage, iter, x, nothing, nothing, nothing, nothing))
+end
+
+function _assert_finite_vector(xs, pm::ParamMap, stage::Symbol, iter::Int)
+    idx = findfirst(x -> !isfinite(x), xs)
+    idx === nothing && return nothing
+    node_id, node_kind, range = _param_context(pm, idx)
+    throw(NonFiniteTrainingError(stage, iter, xs[idx], idx, node_id, node_kind, range))
+end
+
+function _assert_gradient(g, pm::ParamMap, iter::Int)
+    g === nothing && throw(NonFiniteTrainingError(:gradient, iter, nothing, nothing, nothing, nothing, nothing))
+    return _assert_finite_vector(g, pm, :gradient, iter)
+end
+
+function _param_context(pm::ParamMap, idx::Int)
+    for (node_id, range) in pm.ranges
+        idx in range || continue
+        return node_id, get(pm.leaf_kind, node_id, :sum), range
+    end
+    return nothing, nothing, nothing
+end
+
 function fit_params(
     spn::SumProductNetwork,
     X;
@@ -513,6 +630,8 @@ function fit_params(
         θ0 === nothing && (θ0 = θ0′)
         pm === nothing && (pm = pm′)
     end
+    _validate_param_map(spn, pm, θ0)
+    _assert_finite_vector(θ0, pm, :initial_parameters, 0)
 
     data = if encoded
         validate_training_data(spn, X, pm; encoded = true)
@@ -530,8 +649,11 @@ function fit_params(
 
     for it in 1:maxiters
         l, back = Zygote.pullback(loss, θ)
+        _assert_finite_scalar(l, pm, :loss, it)
         g = first(back(one(l)))
+        _assert_gradient(g, pm, it)
         st, θ = Optimisers.update(st, θ, g)
+        _assert_finite_vector(θ, pm, :updated_parameters, it)
         push!(history, l)
         if verbose && (it == 1 || it % 25 == 0 || it == maxiters)
             @info "fit_params" iter = it loss = l
