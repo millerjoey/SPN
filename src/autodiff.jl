@@ -503,15 +503,43 @@ function _leaf_interval_logpdf(kind::Symbol, ϕ, x::AbstractInterval)
         θ = _softplus(ϕ[2]) + _POS_EPS
         lo, hi = leftendpoint(x), rightendpoint(x)
         return _logprobdiff(_gamma_cdf(hi, α, θ), _gamma_cdf(lo, α, θ))
-    elseif kind === :poisson || kind === :negbin
-        return _leaf_discrete_interval_logpdf(kind, ϕ, x)
+    elseif kind === :poisson
+        return _leaf_poisson_interval_logpdf(ϕ, x)
+    elseif kind === :negbin
+        return _leaf_enumerated_discrete_interval_logpdf(kind, ϕ, x)
     elseif kind === :categorical
         return _leaf_set_logpdf(kind, ϕ, _integer_values(x))
     end
     error("Interval observations are unsupported for leaf kind: $kind")
 end
 
-function _leaf_discrete_interval_logpdf(kind::Symbol, ϕ, x::AbstractInterval)
+function _leaf_poisson_interval_logpdf(ϕ, x::AbstractInterval)
+    isempty(x) && return -Inf
+    λ = _softplus(ϕ[1]) + _POS_EPS
+    lower, upper = _integer_bounds(x)
+    if upper !== nothing && upper < 0
+        return -Inf
+    end
+    if lower !== nothing
+        lower = max(lower, 0)
+    end
+
+    if lower === nothing && upper === nothing
+        return zero(λ)
+    elseif lower === nothing
+        return _poisson_logcdf(upper, λ)
+    elseif upper === nothing
+        lower <= 0 && return zero(λ)
+        return _poisson_logccdf(lower - 1, λ)
+    else
+        upper < lower && return -Inf
+        log_upper = _poisson_logcdf(upper, λ)
+        log_upper == 0 && return _poisson_logccdf(lower - 1, λ)
+        return _logsubexp(log_upper, _poisson_logcdf(lower - 1, λ))
+    end
+end
+
+function _leaf_enumerated_discrete_interval_logpdf(kind::Symbol, ϕ, x::AbstractInterval)
     isempty(x) && return -Inf
     lower, upper = _integer_bounds(x)
     if upper !== nothing && upper < 0
@@ -566,6 +594,22 @@ function _log1mexp(x)
     x == -Inf && return zero(x)
     x >= 0 && return -Inf
     return x < -log(2) ? log1p(-exp(x)) : log(-expm1(x))
+end
+
+function _logsubexp(log_hi, log_lo)
+    log_lo == -Inf && return log_hi
+    log_hi <= log_lo && return -Inf
+    return log_hi + _log1mexp(log_lo - log_hi)
+end
+
+function _poisson_logcdf(k::Int, λ)
+    k < 0 && return -Inf
+    return Distributions.logcdf(Poisson(λ), k)
+end
+
+function _poisson_logccdf(k::Int, λ)
+    k < 0 && return zero(λ)
+    return Distributions.logccdf(Poisson(λ), k)
 end
 
 function _logprobdiff(hi, lo)

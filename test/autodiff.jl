@@ -90,6 +90,23 @@ end
     @test all(isfinite, g)
 end
 
+@testset "Autodiff uses CDFs for Poisson intervals" begin
+    leaf = Leaf(Poisson(2.0), 1)
+    spn = SumProductNetwork(leaf, Dict{Int64,Any}(), SPN.ScopeMap((:x,), (Int,)))
+    θ0, pm = initial_params(spn)
+    dist = Poisson(2.0)
+
+    @test meanlogpdf(spn, reshape(Any[1..3], :, 1), θ0, pm) ≈ log(cdf(dist, 3) - cdf(dist, 0))
+    @test meanlogpdf(spn, reshape(Any[-Inf..3], :, 1), θ0, pm) ≈ logcdf(dist, 3)
+    @test meanlogpdf(spn, reshape(Any[5..Inf], :, 1), θ0, pm) ≈ logccdf(dist, 4)
+    @test meanlogpdf(spn, reshape(Any[0..1_000_000], :, 1), θ0, pm) ≈ 0.0 atol = 1e-12
+
+    loss(θ) = -meanlogpdf(spn, reshape(Any[10..1_000_000], :, 1), θ, pm)
+    g = only(Zygote.gradient(loss, θ0))
+    @test isfinite(loss(θ0))
+    @test all(isfinite, g)
+end
+
 @testset "Autodiff trains infinite discrete intervals" begin
     for leaf in (Leaf(Poisson(2.0), 1), Leaf(NegativeBinomial(4.0, 0.35), 1))
         spn = SumProductNetwork(leaf, Dict{Int64,Any}(), SPN.ScopeMap((:x,), (Int,)))
