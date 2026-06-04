@@ -1,6 +1,5 @@
-export compile, Node, SumNode, ProductNode, Leaf, SumProductNetwork, add!
+export Node, SumNode, ProductNode, Leaf, SumProductNetwork, add!
 export rescope!
-export NB
 
 abstract type Node end
 
@@ -64,34 +63,3 @@ function add!(N::ProductNode, Child::Node)
     scopeunion!(N.scope, Child.scope)
     return N
 end
-
-function replace(N::Leaf, θ, parmap)
-    ϕ = θ[parmap[N.id]]
-    Dtype = constructor(N.dist)
-    D = safe_build_dist(Dtype, ϕ)
-    return Leaf(D, N.scope, N.id)
-end
-
-function safe_build_dist(D::Type{Gamma}, ϕ)
-    α = ϕ[1] + max(0.001 - ϕ[1], 0)
-    θ = ϕ[2] + max(0.0001 - ϕ[2], 0)
-    return D(α, θ)
-end
-
-function safe_build_dist(D::Type{Poisson}, ϕ)
-    λ = ϕ[1] + max(0.0001 - ϕ[1], 0)
-    return D(λ)
-end
-
-function safe_build_dist(D::Type{NegativeBinomial}, ϕ)
-    r = ϕ[1] + max(0.0001 - ϕ[1], 0)
-    p = ϕ[2]
-    return D(r, p)
-end
-
-
-constructor(D::Normal) = Normal
-constructor(D::Gamma) = Gamma
-constructor(D::Exponential) = Exponential
-constructor(D::NegativeBinomial) = NegativeBinomial
-constructor(D::Poisson) = Poisson

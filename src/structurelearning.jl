@@ -4,7 +4,7 @@ struct ℵ
     temp::Float64
 end
 
-export factor_v, learnSPN
+export learnSPN
 
 
 function learnSPN(X, α_init=0.1)
@@ -45,8 +45,6 @@ function learnSPN!(n, X, ScM; weight = 1, α = ℵ(0.1, 0.1))
     end
     return(n)
 end
-
-export LearnRSPN
 
 function add_univariate_leaf!(SPN, X, ScM, weight)
     scope = ScM[columnnames(X)[1]]

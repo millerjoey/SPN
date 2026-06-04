@@ -5,6 +5,7 @@ version = "0.1.0"
 
 [deps]
 CategoricalArrays = "324d7699-5711-5eae-9e2f-1d82baa6b597"
+ChainRulesCore = "d360d2e6-b24c-11e9-a2a3-2a2ae2dbcce4"
 Clustering = "aaaa29a8-35af-508c-8bc3-b662a17a0fe5"
 Combinatorics = "861a8166-3701-5b0c-9a16-15d98fcdc6aa"
 DataFrames = "a93c6f00-e57d-5684-b7b6-d8193f3e46c0"
@@ -14,9 +15,12 @@ HypothesisTests = "09f84164-cd44-5f33-b23f-e6b0d136a0d5"
 IntervalSets = "8197267c-284f-5f27-9208-e0e47529a953"
 LightGraphs = "093fc24a-ae57-5d10-9952-331d41423f4d"
 LinearAlgebra = "37e2e46d-f89d-539d-b4ee-838fcccc9c8e"
+LogExpFunctions = "2ab3a3ac-af41-5b50-aa03-7779005ae688"
 MixedPCA = "ac102973-90e7-4752-b7c7-2b9ec24c1019"
 NamedArrays = "86f7a689-2022-50b4-a561-43c23ac3c673"
+Optimisers = "3bd65402-5787-11e9-1adc-39752487f4e2"
 Random = "9a3f8284-a2c9-5f02-9a11-845980a1fd5c"
+SpecialFunctions = "276daf66-3868-5448-9aa4-cd146d93841b"
 StableRNGs = "860ef19b-820b-49d6-a774-d7a799459cd3"
 StaticArrays = "90137ffa-7385-5640-81b9-e52037218182"
 Statistics = "10745b16-79ce-11e8-11f9-7d13ad32a3b2"
@@ -26,3 +30,8 @@ Tables = "bd369af6-aec1-5ad0-b16a-f7cc5008161c"
 Test = "8dfed614-e22c-5e08-85e1-65c5234f0b40"
 TypedTables = "9d95f2ec-7b3d-5a63-8d20-e2491e220bb9"
 UUIDs = "cf7118a7-6976-5b1a-9a39-7adc72f591a4"
+Zygote = "e88e6eb3-aa80-5325-afca-941959d7151f"
+
+[sources]
+HilbertSchmidtIndependenceCriterion = {url = "https://github.com/millerjoey/HilbertSchmidtIndependenceCriterion.jl.git", rev = "master"}
+MixedPCA = {url = "https://github.com/millerjoey/MixedPCA", rev = "master"}

@@ -1,0 +1,24 @@
+# TODO
+
+## Parameter Learning
+- Add schema validation for `fit_params`: column count, column order, expected categorical pools, supported observation types, and clear errors for unknown categories.
+- Add nonfinite training diagnostics: stop when loss, gradients, or parameters become nonfinite and report the offending node/parameter range.
+- Add minibatching and validation support.
+- Add optimizer controls beyond a fixed Adam learning rate, including optimizer selection, early stopping, callbacks, and history metadata.
+- Add regularization and priors for sum weights and leaf parameters.
+- Support finite interval observations for discrete leaves without enumeration where possible.
+- Support infinite interval observations for discrete leaves.
+- Decide semantics for finite set-valued continuous observations; current training support treats intervals as the continuous censored-data path.
+- Add support for more `Distributions.jl` leaf types or a documented extension interface for custom leaves.
+- Add serialization for trained parameter vectors and `ParamMap`.
+
+## Structure Learning
+- Harden missing-value handling in clustering/factorization and replace the current recoding approach with explicit, tested behavior.
+- Review the distribution fitting heuristic for integer data, especially edge cases with zero variance and overdispersion.
+- Add deterministic controls for all random structure-learning paths.
+
+## API And Maintenance
+- Separate public API from internal helpers and audit exports.
+- Add docstrings for the stable public API.
+- Add examples for interval and set-valued parameter learning.
+- Add CI coverage for the README examples.

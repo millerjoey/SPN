@@ -2,7 +2,7 @@
 
 Structure learning, sampling, conditional sampling, and conditional log pdfs for sum-product networks I made to explore a research project. Compatible with categorical data, missing data.
 
-Shout out to [Martin Trapp](https://github.com/trappmartin) whose SumProductNetwork package inspired me to try to use AD for weight and leaf-distribution parameter learning! I failed, but added some other features...
+Shout out to [Martin Trapp](https://github.com/trappmartin) whose SumProductNetwork package inspired me to try to use AD for weight and leaf-distribution parameter learning.
 
 ```julia
 using SPN
@@ -20,7 +20,7 @@ x6 = categorical([ismissing(el) ? missing : (el > 10 ? "D" : "E") for el in D.x�
 D = Table(D; x₅=x5)
 D = Table(D; x₆=x6)
 
-spn = learnSPN(D, 0.1) # Structure learning.
+spn = learnSPN(D, 0.2) # Structure learning.
 ```
 
 ## Sampling
@@ -62,3 +62,17 @@ Since it's an SPN, we get any conditional probabilities of course
 ```julia
 exp(logpdf(spn, Dict(1=>2, 6=>"E")) - logpdf(spn, Dict(1=>2))) # P(X6="E" | X1 = 2)
 ```
+
+## Parameter Learning (Prototype)
+There is a prototype autodiff-based parameter learning path (leaf distribution parameters + sum-node weights):
+
+```julia
+θ0, pm = initial_params(spn)
+θ, pm, history = fit_params(spn, D; θ0=θ0, pm=pm, maxiters=20, lr=1e-2)
+spn_fit = with_params(spn, θ, pm)
+```
+
+Notes:
+- `D` can be a `TypedTables.Table` (categoricals will be encoded using the `spn.categorical_pool` from training).
+- Continuous leaves support interval observations.
+- Discrete and categorical leaves support finite set-valued observations.

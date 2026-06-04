@@ -22,6 +22,6 @@ include("show.jl")
 include("probquerying.jl")
 include("sampling.jl")
 include("structurelearning.jl")
-#include("optimization.jl")
 include("helpers.jl")
+include("autodiff.jl")
 end
