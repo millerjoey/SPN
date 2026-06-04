@@ -45,6 +45,17 @@ end
 
 @inline _get(data::EncodedData, row::Int, col::Int) = data.cols[col][row]
 
+function validate_training_data(spn::SumProductNetwork, X, pm::ParamMap; encoded::Bool = false)
+    schema = _training_schema(spn, X; encoded = encoded)
+    kinds = _leaf_kinds_by_scope(spn, pm)
+    for j in 1:schema.ncols
+        col_kinds = get(kinds, j, Symbol[])
+        isempty(col_kinds) && throw(ArgumentError("No leaf parameters found for training column $j."))
+        _validate_training_column(schema.cols[j], col_kinds, schema.categorical[j], schema.names[j])
+    end
+    return nothing
+end
+
 function encode_data(spn::SumProductNetwork, X::AbstractMatrix)
     cols = [view(X, :, j) for j in 1:size(X, 2)]
     return EncodedData(cols, size(X, 1))
@@ -70,8 +81,131 @@ end
 
 _is_set_observation(x) = x isa AbstractVector || x isa Tuple || x isa AbstractSet
 
+struct _TrainingSchema{C,N}
+    cols::C
+    names::N
+    ncols::Int
+    categorical::Vector{Bool}
+end
+
+function _training_schema(spn::SumProductNetwork, X::AbstractMatrix; encoded::Bool = false)
+    n_expected = length(spn.ScM)
+    size(X, 2) == n_expected || throw(ArgumentError("Training matrix has $(size(X, 2)) columns; expected $n_expected."))
+    cols = [view(X, :, j) for j in 1:size(X, 2)]
+    names = [string(spn.ScM[j]) for j in 1:n_expected]
+    categorical = fill(false, n_expected)
+    return _TrainingSchema(cols, names, n_expected, categorical)
+end
+
+function _training_schema(spn::SumProductNetwork, X::Table; encoded::Bool = false)
+    expected = Tuple(keys(spn.ScM))
+    got = Tuple(columnnames(X))
+    got == expected || throw(ArgumentError("Training table columns must match SPN scope order. Expected $(expected), got $(got)."))
+    raw_cols = collect(columns(X))
+    _validate_column_lengths(raw_cols)
+    categorical = [haskey(spn.categorical_pool, j) for j in eachindex(raw_cols)]
+    return _TrainingSchema(raw_cols, string.(collect(got)), length(raw_cols), categorical)
+end
+
+function _training_schema(spn::SumProductNetwork, X::EncodedData; encoded::Bool = false)
+    n_expected = length(spn.ScM)
+    length(X.cols) == n_expected || throw(ArgumentError("Encoded training data has $(length(X.cols)) columns; expected $n_expected."))
+    all(length(col) == X.nrows for col in X.cols) || throw(ArgumentError("Encoded training columns must all have nrows=$(X.nrows)."))
+    names = [string(spn.ScM[j]) for j in 1:n_expected]
+    categorical = fill(false, n_expected)
+    return _TrainingSchema(X.cols, names, n_expected, categorical)
+end
+
+function _validate_column_lengths(cols)
+    isempty(cols) && return nothing
+    n = length(cols[1])
+    all(length(col) == n for col in cols) || throw(ArgumentError("Training table columns must all have the same length."))
+    return nothing
+end
+
+function _leaf_kinds_by_scope(spn::SumProductNetwork, pm::ParamMap)
+    kinds = Dict{Int,Vector{Symbol}}()
+    function visit(n::Node)
+        if n isa Leaf
+            push!(get!(kinds, n.scope, Symbol[]), pm.leaf_kind[n.id])
+        else
+            for c in children(n)
+                visit(c)
+            end
+        end
+    end
+    visit(spn.root)
+    return Dict(k => unique(v) for (k, v) in kinds)
+end
+
+function _validate_training_column(col, kinds::Vector{Symbol}, iscategorical::Bool, name::AbstractString)
+    for i in eachindex(col)
+        _validate_observation(col[i], kinds, iscategorical, name, i)
+    end
+    return nothing
+end
+
+function _validate_observation(x, kinds::Vector{Symbol}, iscategorical::Bool, name::AbstractString, row)
+    ismissing(x) && return nothing
+    if x isa AbstractInterval
+        iscategorical && throw(ArgumentError("Categorical interval observations are unsupported for column $(name), row $(row); use a finite set of category levels."))
+        for kind in kinds
+            if kind === :poisson || kind === :negbin
+                _validate_finite_interval(x, name, row)
+            elseif !(kind === :normal || kind === :gamma)
+                throw(ArgumentError("Interval observations are unsupported for $kind leaves in column $(name), row $(row)."))
+            end
+        end
+    elseif _is_set_observation(x)
+        isempty(x) && throw(ArgumentError("Set-valued observation for column $(name), row $(row) is empty."))
+        for kind in kinds
+            (kind === :poisson || kind === :negbin || kind === :categorical) ||
+                throw(ArgumentError("Set-valued observations are unsupported for $kind leaves in column $(name), row $(row)."))
+            _validate_set_observation(x, kind, iscategorical, name, row)
+        end
+    else
+        for kind in kinds
+            _validate_point_observation(x, kind, iscategorical, name, row)
+        end
+    end
+    return nothing
+end
+
+function _validate_set_observation(xs, kind::Symbol, iscategorical::Bool, name, row)
+    if kind === :poisson || kind === :negbin
+        all(_is_integer_observation, xs) || throw(ArgumentError("Column $(name), row $(row) has a set-valued observation with non-integer values; $kind leaves require finite integer sets."))
+    elseif kind === :categorical && !iscategorical
+        all(x -> x isa Integer, xs) || throw(ArgumentError("Categorical column $(name), row $(row) must use encoded integer category ids for matrix/encoded set observations."))
+    end
+    return nothing
+end
+
+function _validate_finite_interval(x::AbstractInterval, name, row)
+    lo, hi = leftendpoint(x), rightendpoint(x)
+    (isfinite(lo) && isfinite(hi)) || throw(ArgumentError("Discrete interval observation for column $(name), row $(row) must have finite endpoints."))
+    return nothing
+end
+
+function _validate_point_observation(x, kind::Symbol, iscategorical::Bool, name, row)
+    if kind === :normal || kind === :gamma
+        x isa Real || throw(ArgumentError("Column $(name), row $(row) has $(typeof(x)); $kind leaves require numeric point observations."))
+    elseif kind === :poisson || kind === :negbin
+        _is_integer_observation(x) || throw(ArgumentError("Column $(name), row $(row) has $(x); $kind leaves require integer point observations, finite integer intervals, or finite sets."))
+    elseif kind === :categorical
+        if !iscategorical && !(x isa Integer)
+            throw(ArgumentError("Categorical column $(name), row $(row) must use encoded integer category ids for matrix/encoded data."))
+        end
+    else
+        throw(ArgumentError("Unsupported leaf kind $kind for column $(name)."))
+    end
+    return nothing
+end
+
 function _encode_categorical_observation(pool, v)
     ismissing(v) && return missing
+    if v isa AbstractInterval
+        throw(ArgumentError("Categorical interval observations are unsupported; use a finite set of category levels."))
+    end
     if _is_set_observation(v)
         return [_encode_categorical_value(pool, el) for el in v]
     end
@@ -79,10 +213,13 @@ function _encode_categorical_observation(pool, v)
 end
 
 function _encode_categorical_value(pool, v)
-    v isa UInt32 && return v
-    v isa CategoricalValue && return pool.invindex[String(v)]
-    v isa AbstractString && return pool.invindex[v]
-    return pool.invindex[string(v)]
+    if v isa UInt32
+        1 <= Int(v) <= length(pool.levels) || throw(ArgumentError("Encoded categorical value $(v) is outside 1:$(length(pool.levels))."))
+        return v
+    end
+    key = v isa CategoricalValue ? String(v) : v isa AbstractString ? v : string(v)
+    haskey(pool.invindex, key) || throw(ArgumentError("Unknown categorical level $(repr(key)); expected one of $(collect(pool.levels))."))
+    return pool.invindex[key]
 end
 
 function initial_params(spn::SumProductNetwork)
@@ -167,8 +304,16 @@ function _categorical_logits_padded(d::Categorical, K::Int)
 end
 
 function meanlogpdf(spn::SumProductNetwork, X, θ::AbstractVector, pm::ParamMap; encoded::Bool = false)
-    data = encoded ? X : ChainRulesCore.ignore_derivatives() do
-        encode_data(spn, X)
+    data = if encoded
+        ChainRulesCore.ignore_derivatives() do
+            validate_training_data(spn, X, pm; encoded = true)
+        end
+        X
+    else
+        ChainRulesCore.ignore_derivatives() do
+            validate_training_data(spn, X, pm)
+            encode_data(spn, X)
+        end
     end
     n = data.nrows
     n == 0 && return -Inf
@@ -369,7 +514,13 @@ function fit_params(
         pm === nothing && (pm = pm′)
     end
 
-    data = encoded ? X : encode_data(spn, X)
+    data = if encoded
+        validate_training_data(spn, X, pm; encoded = true)
+        X
+    else
+        validate_training_data(spn, X, pm)
+        encode_data(spn, X)
+    end
     loss(θ) = -meanlogpdf(spn, data, θ, pm; encoded = true)
 
     opt = Optimisers.Adam(lr)

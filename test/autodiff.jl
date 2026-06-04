@@ -92,3 +92,20 @@ end
     @test isfinite(loss(θ0))
     @test all(isfinite, g)
 end
+
+@testset "Autodiff validates training data" begin
+    normal = SumProductNetwork(Leaf(Normal(), 1), Dict{Int64,Any}(), SPN.ScopeMap((:x,), (Float64,)))
+    θn, pmn = initial_params(normal)
+    @test_throws ArgumentError meanlogpdf(normal, reshape([1.0 2.0], 1, 2), θn, pmn)
+    @test_throws ArgumentError meanlogpdf(normal, Table(z = [1.0]), θn, pmn)
+    @test_throws ArgumentError meanlogpdf(normal, reshape(Any[[1.0, 2.0]], :, 1), θn, pmn)
+
+    D0 = Table(y = categorical(["A", "B", "A"]))
+    cat_spn = learnSPN(D0, 0.2)
+    θc, pmc = initial_params(cat_spn)
+    @test_throws ArgumentError meanlogpdf(cat_spn, Table(y = ["Z"]), θc, pmc)
+    @test_throws ArgumentError meanlogpdf(cat_spn, reshape(Any["A"], :, 1), θc, pmc)
+
+    encoded = encode_data(cat_spn, Table(y = ["A", ["A", "B"]]))
+    @test isfinite(meanlogpdf(cat_spn, encoded, θc, pmc; encoded = true))
+end
