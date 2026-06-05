@@ -72,6 +72,17 @@ end
     @test fit_dist(x_negbin)==NegativeBinomial(r, p)
     x_gamma = rand(rng, Gamma(), 30)
     @test fit_dist(x_gamma)==fit(Gamma, x_gamma)
+
+    positive_integer_looking = [1.0, 2.0, 3.0]
+    @test fit_dist(positive_integer_looking; numeric_kind = :continuous) == fit(Gamma, positive_integer_looking)
+    @test fit_dist(positive_integer_looking; numeric_kind = :continuous, allow_gamma = false) == fit(Normal, positive_integer_looking)
+
+    root = SumNode()
+    global_data = Table(x = [0.0, 1.0, 2.5, 3.0])
+    subset = Table(x = [1.0, 2.0, 3.0])
+    ctx = SPN._learning_context(global_data)
+    SPN.add_univariate_leaf!(root, subset, SPN.ScopeMap((:x,), (Float64,)), 1.0; ctx = ctx)
+    @test only(children(root)).dist == fit(Normal, subset.x)
 end
 
 @testset "Structure Learning" begin

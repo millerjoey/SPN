@@ -27,4 +27,4 @@ The output reports rows/columns, structure learning time, node/leaf count, initi
 
 ## Notes
 
-These are smoke benchmarks, not a full evaluation suite. They are intended to catch regressions in mixed-data loading, missing-value handling, structure learning, and autodiff parameter training. Some real-data likelihoods can be `Inf` or `NaN` with the current distribution heuristics; the synthetic benchmark is the cleanest end-to-end likelihood check.
+These are smoke benchmarks, not a full evaluation suite. They are intended to catch regressions in mixed-data loading, missing-value handling, structure learning, and autodiff parameter training. The synthetic benchmark is the cleanest end-to-end likelihood check because its latent structure and support are controlled.

@@ -4,30 +4,36 @@ struct ℵ
     temp::Float64
 end
 
+struct _LearningContext
+    numeric_kind::Dict{Symbol,Symbol}
+    allow_gamma::Dict{Symbol,Bool}
+end
+
 export learnSPN
 
 
 function learnSPN(X, α_init=0.1)
     _validate_learnSPN_data(X)
+    ctx = _learning_context(X)
     α = ℵ(α_init, α_init) # ("global" alpha, "local" alpha)
     init = SumNode() # Can always Init with a sum node. Weight = 1 by default so just add below it.
     scopemap = ScopeMap(columnnames(X), nonmissingtype.(eltype.(values(columns(X)))))
-    SPN = learnSPN!(init, X, scopemap, weight = 1, α = α)[1] # Take child as root, ignore init.
+    SPN = learnSPN!(init, X, scopemap, weight = 1, α = α, ctx = ctx)[1] # Take child as root, ignore init.
     cat_vars = Dict{Int64,Any}(i=>col.pool for (i,col) in enumerate(columns(X)) if col isa AbstractCategoricalVector)
     SPN = SumProductNetwork(SPN, cat_vars, scopemap)
     return SPN
 end
 
 # Change to mutating. Modify calls
-function learnSPN!(n, X, ScM; weight = 1, α = ℵ(0.1, 0.1))
+function learnSPN!(n, X, ScM; weight = 1, α = ℵ(0.1, 0.1), ctx = _learning_context(X))
     if dims(X, 2) == 1 # V is a univariate
-        add_univariate_leaf!(n, X, ScM, weight)
+        add_univariate_leaf!(n, X, ScM, weight; ctx = ctx)
     else
         V = factor(X, α.temp) # Need to pass entire X and current scope. Also, no need to attempt to factor twice in a row.
         if length(V) ≥ 2 # 1 if data doesn't factor.
             child = ProductNode()
             for Vᵢ in V
-                learnSPN!(child, select(X, Vᵢ), ScM, weight = 1, α = ℵ(α.init, α.init))
+                learnSPN!(child, select(X, Vᵢ), ScM, weight = 1, α = ℵ(α.init, α.init), ctx = ctx)
             end
             n isa SumNode ? add!(n, child, log(weight)) : add!(n, child)
         else
@@ -35,22 +41,23 @@ function learnSPN!(n, X, ScM; weight = 1, α = ℵ(0.1, 0.1))
             if length(T) ≥ 2 #clustering_works and has enough present obs.
                 child = SumNode()
                 for Tⱼ in T
-                    learnSPN!(child, X[Tⱼ], ScM, weight = sum(Tⱼ)/length(Tⱼ), α = ℵ(α.init, α.init))
+                    learnSPN!(child, X[Tⱼ], ScM, weight = sum(Tⱼ)/length(Tⱼ), α = ℵ(α.init, α.init), ctx = ctx)
                 end
                 n isa SumNode ? add!(n, child, log(weight)) : add!(n, child)
             else
                 #n = add_multivariate_leaf(n, Class, X, weight, scope)
-                learnSPN!(n, X, ScM, weight = weight, α = ℵ(α.init, NaN)) # Force factorization
+                learnSPN!(n, X, ScM, weight = weight, α = ℵ(α.init, NaN), ctx = ctx) # Force factorization
             end
         end
     end
     return(n)
 end
 
-function add_univariate_leaf!(SPN, X, ScM, weight)
-    scope = ScM[columnnames(X)[1]]
+function add_univariate_leaf!(SPN, X, ScM, weight; ctx = _learning_context(X))
+    name = columnnames(X)[1]
+    scope = ScM[name]
     x = select(X,1)
-    D = fit_dist(x)
+    D = fit_dist(x; numeric_kind = get(ctx.numeric_kind, name, nothing), allow_gamma = get(ctx.allow_gamma, name, true))
     SPN isa SumNode ? add!(SPN, Leaf(D, scope), log(weight)) : add!(SPN, Leaf(D, scope)) # Still need to do this.
     nothing
 end
@@ -80,15 +87,30 @@ function _observed_values(x)
     return vals
 end
 
-function fit_dist(x::AbstractCategoricalVector)
+function _learning_context(X)
+    numeric_kind = Dict{Symbol,Symbol}()
+    allow_gamma = Dict{Symbol,Bool}()
+    for (nm, col) in zip(columnnames(X), columns(X))
+        T = nonmissingtype(eltype(col))
+        T <: Number || continue
+        vals = _observed_values(col)
+        kind = all(isinteger.(vals)) ? :integer : :continuous
+        numeric_kind[nm] = kind
+        allow_gamma[nm] = kind === :continuous && all(vals .> 0)
+    end
+    return _LearningContext(numeric_kind, allow_gamma)
+end
+
+function fit_dist(x::AbstractCategoricalVector; kwargs...)
     vals = _observed_values(x)
     D = fit(Categorical, [el.ref for el in vals])
     return D
 end
 
-function fit_dist(x::AbstractVector)
+function fit_dist(x::AbstractVector; numeric_kind::Union{Nothing,Symbol} = nothing, allow_gamma::Bool = true)
     vals = _observed_values(x)
-    if all(isinteger.(vals))
+    kind = numeric_kind === nothing ? (all(isinteger.(vals)) ? :integer : :continuous) : numeric_kind
+    if kind === :integer
         x̄, σ² = mean(vals), var(vals)
         if σ² ≤ x̄ # Let's do Poisson
             D = Poisson(x̄)
@@ -98,12 +120,14 @@ function fit_dist(x::AbstractVector)
         #D = MixtureModel([C₁, NegativeBinomial(r,p)], [p₀, 1-p₀]) # Mixture, even though support
             D = NegativeBinomial(r,p)
         end
-    else # Floats
-        if all(vals .> 0.)
+    elseif kind === :continuous
+        if allow_gamma && all(vals .> 0)
             D = fit(Gamma, vals)
         else
             D = fit(Normal, vals)
         end
+    else
+        throw(ArgumentError("Unsupported numeric kind $(repr(kind)); expected :integer or :continuous."))
     end
     return D
 end
