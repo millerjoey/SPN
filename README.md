@@ -76,3 +76,10 @@ Notes:
 - `D` can be a `TypedTables.Table` (categoricals will be encoded using the `spn.categorical_pool` from training).
 - Continuous leaves support interval observations.
 - Discrete and categorical leaves support finite set-valued observations.
+
+## Mixed-Data Benchmarks
+Small mixed-data smoke benchmarks live in `benchmarks/`. They include a synthetic known-cluster generator plus UCI Credit Approval and Adult loaders:
+
+```julia
+julia --project=. benchmarks/mixed_data.jl synthetic --max-rows=200 --fit-iters=2
+```
