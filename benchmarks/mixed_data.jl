@@ -21,10 +21,32 @@ const CREDIT_NUMERIC = Set([:a2, :a3, :a8, :a11, :a14, :a15])
 const ADULT_NAMES = (:age, :workclass, :fnlwgt, :education, :education_num, :marital_status, :occupation, :relationship, :race, :sex, :capital_gain, :capital_loss, :hours_per_week, :native_country, :income)
 const ADULT_NUMERIC = Set([:age, :fnlwgt, :education_num, :capital_gain, :capital_loss, :hours_per_week])
 
+const SYNTHETIC_COMPONENTS = (
+    (
+        label = "low",
+        prior = 0.55,
+        signal = Normal(-1.5, 0.7),
+        positive = Gamma(2.0, 1.0),
+        count = Poisson(2.0),
+        tier = Dict("A" => 0.65, "B" => 0.30, "C" => 0.05),
+        flag = Dict("no" => 0.85, "yes" => 0.15),
+    ),
+    (
+        label = "high",
+        prior = 0.45,
+        signal = Normal(2.0, 1.0),
+        positive = Gamma(7.0, 0.7),
+        count = NegativeBinomial(5.0, 0.45),
+        tier = Dict("A" => 0.05, "B" => 0.35, "C" => 0.60),
+        flag = Dict("no" => 0.25, "yes" => 0.75),
+    ),
+)
+
 struct BenchConfig
     datasets::Vector{String}
     alpha::Float64
     fit_iters::Int
+    fit_lr::Float64
     max_rows::Union{Nothing,Int}
     seed::Int
     train_frac::Float64
@@ -33,7 +55,7 @@ end
 
 function main(args = ARGS)
     cfg = parse_args(args)
-    println("dataset,rows,cols,learn_seconds,nodes,sums,products,leaves,params,train_ll,test_ll,fit_seconds,fit_train_ll,fit_test_ll")
+    println("dataset,rows,cols,learn_seconds,nodes,sums,products,leaves,params,train_ce,test_ce,oracle_train_ce,oracle_test_ce,fit_seconds,fit_train_ce,fit_test_ce,fit_oracle_test_gap")
     for name in cfg.datasets
         result = run_benchmark(name, cfg)
         print_result(result)
@@ -44,6 +66,7 @@ function parse_args(args)
     datasets = String[]
     alpha = 0.2
     fit_iters = 0
+    fit_lr = 1e-2
     max_rows = nothing
     seed = 1
     train_frac = 0.8
@@ -54,6 +77,8 @@ function parse_args(args)
             alpha = parse(Float64, last(split(arg, "=", limit = 2)))
         elseif startswith(arg, "--fit-iters=")
             fit_iters = parse(Int, last(split(arg, "=", limit = 2)))
+        elseif startswith(arg, "--fit-lr=")
+            fit_lr = parse(Float64, last(split(arg, "=", limit = 2)))
         elseif startswith(arg, "--max-rows=")
             max_rows = parse(Int, last(split(arg, "=", limit = 2)))
         elseif startswith(arg, "--seed=")
@@ -71,7 +96,7 @@ function parse_args(args)
     end
 
     isempty(datasets) && (datasets = ["synthetic", "credit", "adult"])
-    return BenchConfig(datasets, alpha, fit_iters, max_rows, seed, train_frac, synthetic_missing_rate)
+    return BenchConfig(datasets, alpha, fit_iters, fit_lr, max_rows, seed, train_frac, synthetic_missing_rate)
 end
 
 function print_help()
@@ -82,6 +107,7 @@ function print_help()
     Options:
       --alpha=0.2
       --fit-iters=0
+      --fit-lr=1e-2
       --max-rows=N
       --seed=1
       --train-frac=0.8
@@ -99,6 +125,8 @@ function run_benchmark(name::String, cfg::BenchConfig)
     θ0, pm = initial_params(spn)
     train_ll = safe_meanlogpdf(spn, train, θ0, pm, name, "train")
     test_ll = isempty_table(test) ? NaN : safe_meanlogpdf(spn, test, θ0, pm, name, "test")
+    oracle_train_ll = oracle_meanlogpdf(name, train)
+    oracle_test_ll = isempty_table(test) ? NaN : oracle_meanlogpdf(name, test)
     counts = node_counts(spn.root)
 
     fit_seconds = cfg.fit_iters > 0 ? NaN : 0.0
@@ -106,7 +134,7 @@ function run_benchmark(name::String, cfg::BenchConfig)
     fit_test_ll = NaN
     if cfg.fit_iters > 0 && isfinite(train_ll)
         fit_seconds = @elapsed begin
-            θ, pm, _ = fit_params(spn, train; θ0 = θ0, pm = pm, maxiters = cfg.fit_iters, verbose = false)
+            θ, pm, _ = fit_params(spn, train; θ0 = θ0, pm = pm, maxiters = cfg.fit_iters, lr = cfg.fit_lr, verbose = false)
         end
         fit_train_ll = safe_meanlogpdf(spn, train, θ, pm, name, "fit_train")
         fit_test_ll = isempty_table(test) ? NaN : safe_meanlogpdf(spn, test, θ, pm, name, "fit_test")
@@ -124,17 +152,20 @@ function run_benchmark(name::String, cfg::BenchConfig)
         products = counts.products,
         leaves = counts.leaves,
         params = length(θ0),
-        train_ll = train_ll,
-        test_ll = test_ll,
+        train_ce = cross_entropy(train_ll),
+        test_ce = cross_entropy(test_ll),
+        oracle_train_ce = cross_entropy(oracle_train_ll),
+        oracle_test_ce = cross_entropy(oracle_test_ll),
         fit_seconds = fit_seconds,
-        fit_train_ll = fit_train_ll,
-        fit_test_ll = fit_test_ll,
+        fit_train_ce = cross_entropy(fit_train_ll),
+        fit_test_ce = cross_entropy(fit_test_ll),
+        fit_oracle_test_gap = cross_entropy(fit_test_ll) - cross_entropy(oracle_test_ll),
     )
 end
 
 function print_result(r)
     @printf(
-        "%s,%d,%d,%.4f,%d,%d,%d,%d,%d,%.6f,%.6f,%.4f,%.6f,%.6f\n",
+        "%s,%d,%d,%.4f,%d,%d,%d,%d,%d,%.6f,%.6f,%.6f,%.6f,%.4f,%.6f,%.6f,%.6f\n",
         r.dataset,
         r.rows,
         r.cols,
@@ -144,11 +175,14 @@ function print_result(r)
         r.products,
         r.leaves,
         r.params,
-        r.train_ll,
-        r.test_ll,
+        r.train_ce,
+        r.test_ce,
+        r.oracle_train_ce,
+        r.oracle_test_ce,
         r.fit_seconds,
-        r.fit_train_ll,
-        r.fit_test_ll,
+        r.fit_train_ce,
+        r.fit_test_ce,
+        r.fit_oracle_test_gap,
     )
 end
 
@@ -222,6 +256,8 @@ function safe_meanlogpdf(spn, D, θ, pm, dataset, split)
     end
 end
 
+cross_entropy(loglik) = isfinite(loglik) ? -loglik : NaN
+
 function synthetic_mixed_table(n::Int = 1_000; seed::Int = 1, missing_rate::Real = 0.05)
     rng = StableRNG(seed)
     group = Vector{String}(undef, n)
@@ -232,13 +268,13 @@ function synthetic_mixed_table(n::Int = 1_000; seed::Int = 1, missing_rate::Real
     flag = Vector{Union{Missing,String}}(undef, n)
 
     for i in 1:n
-        z = rand(rng) < 0.55 ? 1 : 2
-        group[i] = z == 1 ? "low" : "high"
-        signal[i] = z == 1 ? rand(rng, Normal(-1.5, 0.7)) : rand(rng, Normal(2.0, 1.0))
-        positive[i] = z == 1 ? rand(rng, Gamma(2.0, 1.0)) : rand(rng, Gamma(7.0, 0.7))
-        count[i] = z == 1 ? rand(rng, Poisson(2.0)) : rand(rng, NegativeBinomial(5.0, 0.45))
-        tier[i] = z == 1 ? rand(rng, ["A", "A", "B"]) : rand(rng, ["B", "C", "C"])
-        flag[i] = (z == 2 && count[i] >= 5) || signal[i] > 1.0 ? "yes" : "no"
+        component = rand(rng) < SYNTHETIC_COMPONENTS[1].prior ? SYNTHETIC_COMPONENTS[1] : SYNTHETIC_COMPONENTS[2]
+        group[i] = component.label
+        signal[i] = rand(rng, component.signal)
+        positive[i] = rand(rng, component.positive)
+        count[i] = rand(rng, component.count)
+        tier[i] = sample_categorical(rng, component.tier)
+        flag[i] = sample_categorical(rng, component.flag)
     end
 
     apply_mcar!(rng, signal, missing_rate)
@@ -255,6 +291,56 @@ function synthetic_mixed_table(n::Int = 1_000; seed::Int = 1, missing_rate::Real
         tier = categorical(tier),
         flag = categorical(flag),
     )
+end
+
+function sample_categorical(rng, probs::Dict{String,Float64})
+    u = rand(rng)
+    total = 0.0
+    for key in sort(collect(keys(probs)))
+        total += probs[key]
+        u <= total && return key
+    end
+    return last(sort(collect(keys(probs))))
+end
+
+function oracle_meanlogpdf(name::String, D)
+    name == "synthetic" || return NaN
+    return mean(synthetic_oracle_logpdf(D, i) for i in 1:nrows(D))
+end
+
+function synthetic_oracle_logpdf(D, row::Int)
+    return _logsumexp([synthetic_component_logpdf(component, D, row) for component in SYNTHETIC_COMPONENTS])
+end
+
+function synthetic_component_logpdf(component, D, row::Int)
+    lp = log(component.prior)
+    lp += categorical_logpdf(D.group[row], Dict(component.label => 1.0))
+    lp += observed_logpdf(component.signal, D.signal[row])
+    lp += observed_logpdf(component.positive, D.positive[row])
+    lp += observed_discrete_logpdf(component.count, D.count[row])
+    lp += categorical_logpdf(D.tier[row], component.tier)
+    lp += categorical_logpdf(D.flag[row], component.flag)
+    return lp
+end
+
+observed_logpdf(dist, x) = ismissing(x) ? 0.0 : logpdf(dist, x)
+
+function observed_discrete_logpdf(dist, x)
+    ismissing(x) && return 0.0
+    isinteger(x) || return -Inf
+    return logpdf(dist, Int(x))
+end
+
+function categorical_logpdf(x, probs::Dict{String,Float64})
+    ismissing(x) && return 0.0
+    p = get(probs, string(x), 0.0)
+    return p > 0 ? log(p) : -Inf
+end
+
+function _logsumexp(xs)
+    m = maximum(xs)
+    m == -Inf && return -Inf
+    return m + log(sum(exp(x - m) for x in xs))
 end
 
 function apply_mcar!(rng, x, rate)

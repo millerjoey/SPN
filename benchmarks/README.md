@@ -20,11 +20,11 @@ Useful options:
 
 ```julia
 julia --project=. benchmarks/mixed_data.jl synthetic credit --max-rows=1000 --fit-iters=10
-julia --project=. benchmarks/mixed_data.jl adult --max-rows=2000 --alpha=0.2 --seed=7
+julia --project=. benchmarks/mixed_data.jl adult --max-rows=2000 --alpha=0.2 --fit-iters=5 --fit-lr=0.01 --seed=7
 ```
 
-The output reports rows/columns, structure learning time, node/leaf count, initial train/test mean log likelihood, and optional post-fit train/test mean log likelihood.
+The output reports rows/columns, structure learning time, node/leaf count, initial train/test cross entropy, optional post-fit cross entropy, and synthetic oracle cross entropy when available.
 
 ## Notes
 
-These are smoke benchmarks, not a full evaluation suite. They are intended to catch regressions in mixed-data loading, missing-value handling, structure learning, and autodiff parameter training. The synthetic benchmark is the cleanest end-to-end likelihood check because its latent structure and support are controlled.
+These are smoke benchmarks, not a full evaluation suite. They are intended to catch regressions in mixed-data loading, missing-value handling, structure learning, and autodiff parameter training. The synthetic benchmark is the cleanest end-to-end likelihood check because its latent structure and support are controlled, so `oracle_*_ce` is known. Real UCI datasets report `NaN` for oracle CE because their true data-generating distributions are unknown.
