@@ -760,7 +760,13 @@ function fit_params(
         else
             _batch_data(data, rand(rng, 1:data.nrows, batch_size))
         end
+        if verbose
+            batch_label = batch_size === nothing || batch_size >= data.nrows ? "full" : string(iter_data.nrows)
+            println("fit_params iter $(it)/$(maxiters): starting gradient on $(batch_label) rows")
+            flush(stdout)
+        end
         loss(θ) = -_meanlogpdf_encoded(spn, iter_data, θ, pm)
+        iter_start = time_ns()
         l, back = Zygote.pullback(loss, θ)
         _assert_finite_scalar(l, pm, :loss, it)
         g = _materialize_gradient(first(back(one(l))), θ)
@@ -768,12 +774,24 @@ function fit_params(
         st, θ = Optimisers.update(st, θ, g)
         _assert_finite_vector(θ, pm, :updated_parameters, it)
         push!(history, l)
+        if verbose
+            iter_seconds = (time_ns() - iter_start) / 1e9
+            println("fit_params iter $(it)/$(maxiters): loss=$(l) gradient/update_seconds=$(round(iter_seconds; digits = 3))")
+            flush(stdout)
+        end
         if keep_best && (it % checkpoint_every == 0 || it == maxiters)
+            verbose && (println("fit_params iter $(it)/$(maxiters): evaluating full-data checkpoint"); flush(stdout))
+            eval_start = time_ns()
             eval_loss = full_loss(θ)
             _assert_finite_scalar(eval_loss, pm, :loss, it)
             if eval_loss < best_loss
                 best_loss = eval_loss
                 best_θ = copy(θ)
+            end
+            if verbose
+                eval_seconds = (time_ns() - eval_start) / 1e9
+                println("fit_params iter $(it)/$(maxiters): checkpoint_loss=$(eval_loss) checkpoint_seconds=$(round(eval_seconds; digits = 3))")
+                flush(stdout)
             end
         end
         if verbose && (it == 1 || it % 25 == 0 || it == maxiters)
