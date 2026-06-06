@@ -718,6 +718,8 @@ function fit_params(
     encoded::Bool = false,
     batch_size::Union{Nothing,Int} = nothing,
     rng::AbstractRNG = Random.default_rng(),
+    keep_best::Bool = false,
+    checkpoint_every::Int = maxiters,
     verbose::Bool = true,
 )
     if θ0 === nothing || pm === nothing
@@ -738,11 +740,19 @@ function fit_params(
     if batch_size !== nothing && batch_size <= 0
         throw(ArgumentError("batch_size must be positive when provided."))
     end
+    checkpoint_every > 0 || throw(ArgumentError("checkpoint_every must be positive."))
 
     opt = Optimisers.Adam(lr)
     st = Optimisers.setup(opt, θ0)
     θ = copy(θ0)
+    best_θ = copy(θ0)
+    best_loss = Inf
     history = Float64[]
+    full_loss(θ) = -_meanlogpdf_encoded(spn, data, θ, pm)
+    if keep_best
+        best_loss = full_loss(θ)
+        _assert_finite_scalar(best_loss, pm, :loss, 0)
+    end
 
     for it in 1:maxiters
         iter_data = if batch_size === nothing || batch_size >= data.nrows
@@ -758,11 +768,20 @@ function fit_params(
         st, θ = Optimisers.update(st, θ, g)
         _assert_finite_vector(θ, pm, :updated_parameters, it)
         push!(history, l)
+        if keep_best && (it % checkpoint_every == 0 || it == maxiters)
+            eval_loss = full_loss(θ)
+            _assert_finite_scalar(eval_loss, pm, :loss, it)
+            if eval_loss < best_loss
+                best_loss = eval_loss
+                best_θ = copy(θ)
+            end
+        end
         if verbose && (it == 1 || it % 25 == 0 || it == maxiters)
             @info "fit_params" iter = it loss = l
         end
     end
 
+    keep_best && (θ = best_θ)
     return θ, pm, history
 end
 

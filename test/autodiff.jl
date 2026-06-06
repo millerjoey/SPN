@@ -37,6 +37,8 @@ end
         lr = 0.05,
         batch_size = 32,
         rng = StableRNG(7),
+        keep_best = true,
+        checkpoint_every = 10,
         verbose = false,
     )
     @test length(history_batch) == 60
