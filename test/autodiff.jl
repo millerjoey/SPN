@@ -28,6 +28,21 @@ end
     ll1 = meanlogpdf(spn, X, θ, pm)
     @test ll1 > ll0
 
+    θ_batch, _, history_batch = fit_params(
+        spn,
+        X;
+        θ0 = θ0,
+        pm = pm,
+        maxiters = 60,
+        lr = 0.05,
+        batch_size = 32,
+        rng = StableRNG(7),
+        verbose = false,
+    )
+    @test length(history_batch) == 60
+    @test all(isfinite, history_batch)
+    @test meanlogpdf(spn, X, θ_batch, pm) > ll0
+
     spn_fit = with_params(spn, θ, pm)
     @test isfinite(logpdf(spn_fit, [0.0]))
 end

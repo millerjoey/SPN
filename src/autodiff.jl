@@ -4,6 +4,7 @@ export fit_params, fit_parameters, with_params
 
 using LogExpFunctions
 using Optimisers
+using Random
 using SpecialFunctions
 using Zygote
 using ChainRulesCore
@@ -408,6 +409,10 @@ function meanlogpdf(spn::SumProductNetwork, X, θ::AbstractVector, pm::ParamMap;
             encode_data(spn, X)
         end
     end
+    return _meanlogpdf_encoded(spn, data, θ, pm)
+end
+
+function _meanlogpdf_encoded(spn::SumProductNetwork, data::EncodedData, θ::AbstractVector, pm::ParamMap)
     n = data.nrows
     n == 0 && return -Inf
     s = zero(eltype(θ))
@@ -415,6 +420,11 @@ function meanlogpdf(spn::SumProductNetwork, X, θ::AbstractVector, pm::ParamMap;
         s += _logpdf_ad(spn.root, data, i, θ, pm)
     end
     return s / n
+end
+
+function _batch_data(data::EncodedData, idxs::AbstractVector{<:Integer})
+    cols = AbstractVector[view(col, idxs) for col in data.cols]
+    return EncodedData(cols, length(idxs))
 end
 
 function _logpdf_ad(n::SumNode, data::EncodedData, row::Int, θ::AbstractVector, pm::ParamMap)
@@ -706,6 +716,8 @@ function fit_params(
     maxiters::Int = 200,
     lr::Real = 1e-2,
     encoded::Bool = false,
+    batch_size::Union{Nothing,Int} = nothing,
+    rng::AbstractRNG = Random.default_rng(),
     verbose::Bool = true,
 )
     if θ0 === nothing || pm === nothing
@@ -723,7 +735,9 @@ function fit_params(
         validate_training_data(spn, X, pm)
         encode_data(spn, X)
     end
-    loss(θ) = -meanlogpdf(spn, data, θ, pm; encoded = true)
+    if batch_size !== nothing && batch_size <= 0
+        throw(ArgumentError("batch_size must be positive when provided."))
+    end
 
     opt = Optimisers.Adam(lr)
     st = Optimisers.setup(opt, θ0)
@@ -731,6 +745,12 @@ function fit_params(
     history = Float64[]
 
     for it in 1:maxiters
+        iter_data = if batch_size === nothing || batch_size >= data.nrows
+            data
+        else
+            _batch_data(data, rand(rng, 1:data.nrows, batch_size))
+        end
+        loss(θ) = -_meanlogpdf_encoded(spn, iter_data, θ, pm)
         l, back = Zygote.pullback(loss, θ)
         _assert_finite_scalar(l, pm, :loss, it)
         g = _materialize_gradient(first(back(one(l))), θ)
